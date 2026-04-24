@@ -465,7 +465,7 @@ function ResultScreen({ session, setSession, setScreen, setLb }) {
         <div style={{fontFamily:"monospace",fontSize:9,letterSpacing:4,color:"#4f82cc",marginBottom:12}}>RESULT</div>
         <div style={{fontSize:52,marginBottom:8}}>🎉</div>
         <div style={{fontSize:18,fontWeight:700,marginBottom:6}}>完成！</div>
-        <div style={{fontSize:13,color:"#555"}}>共作答 <span style={{color:"#4f82cc",fontWeight:700}}>{total}</span> 題</div>
+        <div style={{fontSize:16,color:"#c8922a",fontWeight:600,letterSpacing:2}}>祝您金榜題名</div>
       </div>
       <div style={{marginBottom:20}}>
         {SUBJECTS.filter(s=>results.some(r=>r.sid===s.id)).map(sub=>{
