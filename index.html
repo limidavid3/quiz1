@@ -274,10 +274,7 @@ function HomeScreen({ bank, onStart, onPaper, setLb }) {
                           <div style={{fontSize:10,color:"#4f82cc",marginBottom:3}}>🖼 題目（點擊放大）</div>
                           <img src={q.q_url} onClick={()=>setLb({src:q.q_url,title:"#"+q.displayNum+" 題目"})} style={{width:"100%",height:"auto",display:"block",borderRadius:7,cursor:"pointer",border:"1px solid rgba(255,255,255,0.07)"}} alt="q"/>
                         </div>}
-                        {q.a_url&&<div style={{marginBottom:6}}>
-                          <div style={{fontSize:10,color:"#3d9e6e",marginBottom:3}}>✓ 答案（點擊放大）</div>
-                          <img src={q.a_url} onClick={()=>setLb({src:q.a_url,title:"#"+q.displayNum+" 答案"})} style={{width:"100%",height:"auto",display:"block",borderRadius:7,cursor:"pointer",border:"1px solid rgba(61,158,110,0.2)",background:"rgba(61,158,110,0.03)"}} alt="a"/>
-                        </div>}
+                        {q.a_url&&<SearchAns qId={q.id} aUrl={q.a_url} displayNum={q.displayNum} setLb={setLb}/>}
                         {q.explanation&&<div style={{fontSize:11,color:"#9b6bbf",background:"rgba(114,85,184,0.07)",border:"1px solid rgba(114,85,184,0.15)",borderRadius:6,padding:"6px 9px",lineHeight:1.7}}>
                           🤖 {q.explanation.slice(0,250)}{q.explanation.length>250?"…":""}
                         </div>}
@@ -377,8 +374,8 @@ function QuizScreen({ session, setSession, setScreen, setLb }) {
   const prevIdx=useRef(qIdx);
   const q=questions[qIdx],sub=getSub(q?.sid),unit=getUnit(q?.sid,q?.uid);
   useEffect(()=>{if(prevIdx.current!==qIdx){setShowExp(false);prevIdx.current=qIdx;}},[qIdx]);
-  const reveal=()=>setAnsPwOpen(true);
-  const onAnsUnlock=()=>{ setAnsPwOpen(false); setSession(s=>({...s,showAns:true})); };
+  const reveal=()=>{ setAnsPwOpen(true); setSession(s=>({...s,showAns:true})); };
+  const onAnsUnlock=()=>{ setAnsPwOpen(false); };
   const mark=correct=>{
     const nr=[...session.results,{...q,correct}];
     if(qIdx+1>=questions.length){setSession(s=>({...s,results:nr}));setScreen(SCREENS.RESULT);}
@@ -406,28 +403,35 @@ function QuizScreen({ session, setSession, setScreen, setLb }) {
                 :<div style={{padding:48,textAlign:"center",color:"#2a2a3a",fontSize:13}}>無題目圖片</div>}
       </div>
       {!showAns
-        ? <button onClick={reveal} style={{width:"100%",padding:15,borderRadius:12,fontWeight:700,fontSize:16,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"aa)",border:"none",color:"#fff",boxShadow:"0 4px 20px "+sub.color+"44"}}>顯示答案</button>
+        ? <button onClick={reveal} style={{width:"100%",padding:15,borderRadius:12,fontWeight:700,fontSize:16,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"aa)",border:"none",color:"#fff",boxShadow:"0 4px 20px "+sub.color+"44"}}>顯示答案 🔐</button>
         : <div style={{animation:"fadein .3s ease"}}>
-            <div style={{borderRadius:12,overflow:"hidden",background:"rgba(61,158,110,0.06)",border:"1px solid rgba(61,158,110,0.22)",marginBottom:14,cursor:q.a_url?"pointer":"default"}}
-              onClick={()=>q.a_url&&setLb({src:q.a_url,title:"答案 "+(qIdx+1)})}>
-              {q.a_url?<img src={q.a_url} style={{width:"100%",display:"block",objectFit:"contain",padding:10,maxHeight:400}} alt="a"/>
-                      :<div style={{padding:24,textAlign:"center",color:"#2a4a3a",fontSize:13}}>（未上傳答案圖片）</div>}
-            </div>
+            {/* 答案密碼鎖 */}
             {ansPwOpen && <AnsPwModal onSuccess={onAnsUnlock} onClose={()=>setAnsPwOpen(false)}/>}
-            {q.explanation
-              ? <div className="noprint" style={{marginBottom:14}}>
-                  {!showExp
-                    ? <button onClick={()=>setShowExp(true)} style={{width:"100%",padding:11,borderRadius:10,fontSize:13,fontWeight:600,background:"rgba(114,85,184,0.1)",border:"1px solid rgba(114,85,184,0.3)",color:"#9b6bbf",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🤖 AI 解題說明</button>
-                    : <div style={{borderRadius:10,background:"rgba(114,85,184,0.06)",border:"1px solid rgba(114,85,184,0.2)",overflow:"hidden"}}>
-                        <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(114,85,184,0.15)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                          <span style={{fontSize:12,fontWeight:700,color:"#9b6bbf"}}>🤖 AI 解題說明</span>
-                          <button onClick={()=>setShowExp(false)} style={{fontSize:11,color:"#555",background:"transparent",border:"none"}}>收起</button>
-                        </div>
-                        <div style={{padding:"14px 16px",fontSize:13,color:"#c0c0d8",lineHeight:1.9,whiteSpace:"pre-wrap"}}>{q.explanation}</div>
+            {!session.showAns
+              ? null
+              : <>
+                  {/* 答案圖片 */}
+                  <div style={{borderRadius:12,overflow:"hidden",background:"rgba(61,158,110,0.06)",border:"1px solid rgba(61,158,110,0.22)",marginBottom:14,cursor:q.a_url?"pointer":"default"}}
+                    onClick={()=>q.a_url&&setLb({src:q.a_url,title:"答案 "+(qIdx+1)})}>
+                    {q.a_url?<img src={q.a_url} style={{width:"100%",display:"block",objectFit:"contain",padding:10,maxHeight:400}} alt="a"/>
+                            :<div style={{padding:24,textAlign:"center",color:"#2a4a3a",fontSize:13}}>（未上傳答案圖片）</div>}
+                  </div>
+                  {q.explanation
+                    ? <div className="noprint" style={{marginBottom:14}}>
+                        {!showExp
+                          ? <button onClick={()=>setShowExp(true)} style={{width:"100%",padding:11,borderRadius:10,fontSize:13,fontWeight:600,background:"rgba(114,85,184,0.1)",border:"1px solid rgba(114,85,184,0.3)",color:"#9b6bbf",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🤖 AI 解題說明</button>
+                          : <div style={{borderRadius:10,background:"rgba(114,85,184,0.06)",border:"1px solid rgba(114,85,184,0.2)",overflow:"hidden"}}>
+                              <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(114,85,184,0.15)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                <span style={{fontSize:12,fontWeight:700,color:"#9b6bbf"}}>🤖 AI 解題說明</span>
+                                <button onClick={()=>setShowExp(false)} style={{fontSize:11,color:"#555",background:"transparent",border:"none"}}>收起</button>
+                              </div>
+                              <div style={{padding:"14px 16px",fontSize:13,color:"#c0c0d8",lineHeight:1.9,whiteSpace:"pre-wrap"}}>{q.explanation}</div>
+                            </div>
+                        }
                       </div>
+                    : <div className="noprint" style={{marginBottom:14,padding:"9px 14px",borderRadius:10,background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",fontSize:12,color:"#3a3a4a",textAlign:"center"}}>此題無 AI 題解</div>
                   }
-                </div>
-              : <div className="noprint" style={{marginBottom:14,padding:"9px 14px",borderRadius:10,background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",fontSize:12,color:"#3a3a4a",textAlign:"center"}}>此題無 AI 題解</div>
+                </>
             }
             <div style={{fontSize:12,color:"#555",textAlign:"center",marginBottom:10}}>你答對了嗎？</div>
             <div style={{display:"flex",gap:10}}>
@@ -503,7 +507,9 @@ function ResultScreen({ session, setSession, setScreen, setLb }) {
 }
 
 function PaperScreen({ session, setScreen, setLb }) {
-  const [view,setView]=useState("q");
+  const [view,       setView]       = useState("q");
+  const [ansUnlocked,setAnsUnlocked]= useState(false);
+  const [ansPwOpen2, setAnsPwOpen2] = useState(false);
   const {questions,byUnit}=session;
   const groups=(()=>{
     if(!byUnit) return [{label:null,color:null,qs:questions.map((q,i)=>({...q,num:i+1}))}];
@@ -516,11 +522,12 @@ function PaperScreen({ session, setScreen, setLb }) {
   })();
   return (
     <div>
+      {ansPwOpen2&&<AnsPwModal onSuccess={()=>{setAnsUnlocked(true);setAnsPwOpen2(false);setView("a");}} onClose={()=>setAnsPwOpen2(false)}/>}
       <div className="noprint" style={{display:"flex",alignItems:"center",gap:7,marginBottom:14}}>
         <button onClick={()=>setScreen(SCREENS.HOME)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,color:"#555",padding:"7px 13px",fontSize:12,whiteSpace:"nowrap"}}>← 返回</button>
         <div style={{display:"flex",gap:5,flex:1}}>
           {[{v:"q",l:"📋 題目卷"},{v:"a",l:"✅ 答案卷"}].map(({v,l})=>(
-            <button key={v} onClick={()=>setView(v)} style={{flex:1,padding:7,borderRadius:7,fontSize:12,fontWeight:view===v?700:400,background:view===v?"rgba(79,130,204,0.12)":"rgba(255,255,255,0.02)",border:"1px solid "+(view===v?"rgba(79,130,204,0.3)":"rgba(255,255,255,0.07)"),color:view===v?"#4f82cc":"#555"}}>{l}</button>
+            <button key={v} onClick={()=>{ if(v==="a"&&!ansUnlocked){setAnsPwOpen2(true);}else{setView(v);} }} style={{flex:1,padding:7,borderRadius:7,fontSize:12,fontWeight:view===v?700:400,background:view===v?"rgba(79,130,204,0.12)":"rgba(255,255,255,0.02)",border:"1px solid "+(view===v?"rgba(79,130,204,0.3)":"rgba(255,255,255,0.07)"),color:view===v?"#4f82cc":"#555"}}>{l}{v==="a"&&!ansUnlocked?" 🔐":""}</button>
           ))}
         </div>
         <button onClick={()=>window.print()} style={{background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",borderRadius:7,color:"white",padding:"7px 14px",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>🖨 列印</button>
@@ -807,6 +814,25 @@ function BankCard({ item, idx, sub, editing, setEditing, onDel, onPatch, onSetAI
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Search result answer - locked behind password
+function SearchAns({ qId, aUrl, displayNum, setLb }) {
+  const [unlocked, setUnlocked] = useState(false);
+  const [pwOpen,   setPwOpen]   = useState(false);
+  if (!aUrl) return null;
+  return (
+    <div style={{marginBottom:6}}>
+      <div style={{fontSize:10,color:"#3d9e6e",marginBottom:3}}>✓ 答案</div>
+      {!unlocked
+        ? <button onClick={()=>setPwOpen(true)} style={{width:"100%",padding:"10px",borderRadius:7,background:"rgba(61,158,110,0.07)",border:"1px solid rgba(61,158,110,0.2)",color:"#3d9e6e",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer"}}>
+            🔐 輸入密碼查看答案
+          </button>
+        : <img src={aUrl} onClick={()=>setLb({src:aUrl,title:"#"+displayNum+" 答案"})} style={{width:"100%",height:"auto",display:"block",borderRadius:7,cursor:"pointer",border:"1px solid rgba(61,158,110,0.2)",background:"rgba(61,158,110,0.03)"}} alt="a"/>
+      }
+      {pwOpen&&<AnsPwModal onSuccess={()=>{setUnlocked(true);setPwOpen(false);}} onClose={()=>setPwOpen(false)}/>}
     </div>
   );
 }
