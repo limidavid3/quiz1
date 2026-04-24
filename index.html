@@ -1,290 +1,332 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta name="mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<title>土木技師出題系統</title>
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<style>
-  html,body{margin:0;padding:0;background:#0b0c10;}
-  *{-webkit-tap-highlight-color:transparent;}
-</style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>土木技師出題系統</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#0b0c10;}
+    ::-webkit-scrollbar{width:5px;}
+    ::-webkit-scrollbar-thumb{background:#2a2a3a;border-radius:3px;}
+    @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+    @keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+    @media print{
+      .noprint{display:none!important;}
+      body,html{background:white!important;}
+      .paper-sheet{background:white!important;color:#111!important;border:none!important;}
+      .paper-sheet *{color:#111!important;}
+    }
+  </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const { useState, useRef, useEffect, useCallback } = React;
 
-// ─── JSONBin 設定 ──────────────────────────────────────────────────
-const JSONBIN_KEY = "$2a$10$F1JOmo/H0sA1odLuLNnr8.t24GV/4HcIU1l3N9xt6K7maFKvfZFnO";
-const BIN_ID_KEY  = "cequiz_binid_v1"; // localStorage 存 bin id
+const SB_URL    = "https://hhldjywksyikedrstsjr.supabase.co";
+const SB_KEY    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhobGRqeXdrc3lpa2VkcnN0c2pyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MzE2ODUsImV4cCI6MjA5MjUwNzY4NX0.QaIGMdOkms6sHUzVDjJ2TUKqnyN6_nRLoanJuRgt2ss";
+const BUCKET    = "quiz-images";
+const TABLE     = "questions";
+const AI_WORKER = "https://blue-dust-fd94.limi-david3.workers.dev";
+const BANK_PW   = "890330";
+const ANS_PW    = "97586963";
 
-const jbHeaders = () => ({
-  "Content-Type": "application/json",
-  "X-Master-Key": JSONBIN_KEY,
-  "X-Bin-Versioning": "false",
-});
+const sbH = () => ({ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY });
 
-// 初始化：取得或建立 bin，回傳 { binId, data }
-const initBin = async () => {
-  const stored = localStorage.getItem(BIN_ID_KEY);
-  if (stored) {
-    try {
-      const r = await fetch(`https://api.jsonbin.io/v3/b/${stored}/latest`, { headers: jbHeaders() });
-      if (r.ok) {
-        const j = await r.json();
-        return { binId: stored, data: j.record?.bank || [] };
-      }
-    } catch {}
-  }
-  // 建立新 bin
-  const r = await fetch("https://api.jsonbin.io/v3/b", {
-    method: "POST",
-    headers: { ...jbHeaders(), "X-Bin-Name": "cequiz-bank" },
-    body: JSON.stringify({ bank: [] }),
-  });
-  const j = await r.json();
-  const binId = j.metadata?.id;
-  if (!binId) throw new Error("建立失敗");
-  localStorage.setItem(BIN_ID_KEY, binId);
-  return { binId, data: [] };
+const uploadImage = async (b64,mime,fname) => {
+  const raw=atob(b64.split(",")[1]), arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  const r=await fetch(SB_URL+"/storage/v1/object/"+BUCKET+"/"+fname,{method:"POST",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":mime,"x-upsert":"true"},body:new Blob([arr],{type:mime})});
+  if(!r.ok) throw new Error("上傳失敗");
+  return SB_URL+"/storage/v1/object/public/"+BUCKET+"/"+fname;
 };
+const loadBank  = async () => { const r=await fetch(SB_URL+"/rest/v1/"+TABLE+"?select=*&order=created_at.asc",{headers:sbH()}); if(!r.ok) throw new Error("載入失敗"); return r.json(); };
+const insertQ   = async (item) => { const r=await fetch(SB_URL+"/rest/v1/"+TABLE,{method:"POST",headers:{...sbH(),"Prefer":"return=representation"},body:JSON.stringify(item)}); if(!r.ok) throw new Error("新增失敗"); const a=await r.json(); return a[0]; };
+const updateQ   = async (id,f) => { await fetch(SB_URL+"/rest/v1/"+TABLE+"?id=eq."+id,{method:"PATCH",headers:{...sbH(),"Prefer":"return=representation"},body:JSON.stringify(f)}); };
+const deleteQ   = async (id)   => { await fetch(SB_URL+"/rest/v1/"+TABLE+"?id=eq."+id,{method:"DELETE",headers:sbH()}); };
+const toBase64  = f => new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f);});
+const genId     = () => Math.random().toString(36).slice(2,10);
 
-const saveBin = async (binId, bank) => {
-  await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
-    method: "PUT",
-    headers: jbHeaders(),
-    body: JSON.stringify({ bank }),
-  });
-};
-
-// ─── 資料 ──────────────────────────────────────────────────────────
 const SUBJECTS = [
-  { id:"mech",  name:"材料力學",   short:"材力", color:"#c8922a", bg:"rgba(200,146,42,0.1)",  border:"rgba(200,146,42,0.3)",
-    units:[{id:"axial",name:"軸力",imp:3},{id:"torsion",name:"扭力",imp:2},{id:"sfbm",name:"剪力彎矩圖",imp:3},
-           {id:"bstress",name:"撓曲應力",imp:3},{id:"bshear",name:"撓曲剪應力",imp:2},{id:"deflect",name:"梁撓度分析",imp:3},
-           {id:"buckle",name:"挫曲",imp:2},{id:"shctr",name:"剪力中心",imp:1},{id:"plastic",name:"塑性分析",imp:1}]},
-  { id:"struct",name:"結構學",     short:"結構", color:"#d95f3b", bg:"rgba(217,95,59,0.1)",   border:"rgba(217,95,59,0.3)",
-    units:[{id:"stable",name:"靜定、靜不定判別",imp:1},{id:"conj",name:"共軛梁法",imp:2},{id:"unit",name:"單位力法",imp:3},
-           {id:"fourier",name:"諧和變形法",imp:3},{id:"castig",name:"卡二和最小功法",imp:2},{id:"slope",name:"傾角變位法",imp:3},
-           {id:"moment",name:"綜合彎矩分配法",imp:2},{id:"sym",name:"對稱與反對稱",imp:3},{id:"inflline",name:"影響線",imp:1}]},
-  { id:"rc",    name:"鋼筋混凝土", short:"RC",   color:"#3d9e6e", bg:"rgba(61,158,110,0.1)",  border:"rgba(61,158,110,0.3)",
-    units:[{id:"beam",name:"梁",imp:3},{id:"col",name:"短柱",imp:3},{id:"sheardes",name:"剪力設計",imp:2},
-           {id:"rcfound",name:"基礎",imp:2},{id:"slab",name:"單向版",imp:2},{id:"crack",name:"撓度與裂紋控制",imp:3},
-           {id:"dev",name:"伸展長度",imp:2},{id:"highrc",name:"高等RC",imp:1}]},
-  { id:"steel", name:"鋼結構",     short:"鋼構", color:"#4f82cc", bg:"rgba(79,130,204,0.1)",  border:"rgba(79,130,204,0.3)",
-    units:[{id:"comp",name:"受壓構材(柱)",imp:3},{id:"flex",name:"撓曲構材(梁)",imp:3},{id:"beamcol",name:"梁柱構材(梁柱)",imp:3},
-           {id:"tens",name:"受拉構材",imp:2},{id:"bolt",name:"螺栓接合",imp:2},{id:"weld",name:"銲接接合",imp:2}]},
-  { id:"found", name:"基礎工程",   short:"基礎", color:"#7255b8", bg:"rgba(114,85,184,0.1)",  border:"rgba(114,85,184,0.3)",
-    units:[{id:"eslope",name:"邊坡穩定",imp:1},{id:"lateral",name:"側向土壓力",imp:3},{id:"pile_stab",name:"版樁貫入穩定分析",imp:2},
-           {id:"bearing",name:"極限承載力與基礎型態",imp:3},{id:"retain",name:"擋土牆穩定分析",imp:2},
-           {id:"pile_cap",name:"樁的極限承載力",imp:3},{id:"passive",name:"視側土壓力",imp:1}]},
-  { id:"soil",  name:"土壤力學",   short:"土壤", color:"#8f6035", bg:"rgba(143,96,53,0.1)",   border:"rgba(143,96,53,0.3)",
-    units:[{id:"scomp",name:"土壤的組成",imp:3},{id:"soilstruct",name:"土壤內部構造與外顯特性",imp:2},
-           {id:"class",name:"土壤指數與分類",imp:3},{id:"compact",name:"土壤夯實",imp:2},
-           {id:"stress",name:"土壤中的應力",imp:3},{id:"perm",name:"土壤滲透性",imp:2},
-           {id:"consol",name:"土壤壓縮性",imp:3},{id:"shear",name:"土壤剪力強度",imp:3}]},
+  {id:"mech",  name:"材料力學",   short:"材力", color:"#c8922a",bg:"rgba(200,146,42,0.1)", border:"rgba(200,146,42,0.3)",
+   units:[{id:"axial",name:"軸力",imp:3},{id:"torsion",name:"扭力",imp:2},{id:"sfbm",name:"剪力彎矩圖",imp:3},{id:"bstress",name:"撓曲應力",imp:3},{id:"bshear",name:"撓曲剪應力",imp:2},{id:"deflect",name:"梁撓度分析",imp:3},{id:"buckle",name:"挫曲",imp:2},{id:"shctr",name:"剪力中心",imp:1},{id:"plastic",name:"塑性分析",imp:1}]},
+  {id:"struct",name:"結構學",     short:"結構", color:"#d95f3b",bg:"rgba(217,95,59,0.1)",  border:"rgba(217,95,59,0.3)",
+   units:[{id:"stable",name:"靜定靜不定判別",imp:1},{id:"conj",name:"共軛梁法",imp:2},{id:"unit",name:"單位力法",imp:3},{id:"fourier",name:"諧和變形法",imp:3},{id:"castig",name:"卡二和最小功法",imp:2},{id:"slope",name:"傾角變位法",imp:3},{id:"moment",name:"綜合彎矩分配法",imp:2},{id:"sym",name:"對稱與反對稱",imp:3},{id:"inflline",name:"影響線",imp:1}]},
+  {id:"rc",    name:"鋼筋混凝土", short:"RC",   color:"#3d9e6e",bg:"rgba(61,158,110,0.1)", border:"rgba(61,158,110,0.3)",
+   units:[{id:"beam",name:"梁",imp:3},{id:"col",name:"短柱",imp:3},{id:"sheardes",name:"剪力設計",imp:2},{id:"rcfound",name:"基礎",imp:2},{id:"slab",name:"單向版",imp:2},{id:"crack",name:"撓度與裂紋控制",imp:3},{id:"dev",name:"伸展長度",imp:2},{id:"highrc",name:"高等RC",imp:1}]},
+  {id:"steel", name:"鋼結構",     short:"鋼構", color:"#4f82cc",bg:"rgba(79,130,204,0.1)", border:"rgba(79,130,204,0.3)",
+   units:[{id:"comp",name:"受壓構材(柱)",imp:3},{id:"flex",name:"撓曲構材(梁)",imp:3},{id:"beamcol",name:"梁柱構材(梁柱)",imp:3},{id:"tens",name:"受拉構材",imp:2},{id:"bolt",name:"螺栓接合",imp:2},{id:"weld",name:"銲接接合",imp:2}]},
+  {id:"found", name:"基礎工程",   short:"基礎", color:"#7255b8",bg:"rgba(114,85,184,0.1)", border:"rgba(114,85,184,0.3)",
+   units:[{id:"eslope",name:"邊坡穩定",imp:1},{id:"lateral",name:"側向土壓力",imp:3},{id:"pile_stab",name:"版樁貫入穩定分析",imp:2},{id:"bearing",name:"極限承載力與基礎型態",imp:3},{id:"retain",name:"擋土牆穩定分析",imp:2},{id:"pile_cap",name:"樁的極限承載力",imp:3},{id:"passive",name:"視側土壓力",imp:1}]},
+  {id:"soil",  name:"土壤力學",   short:"土壤", color:"#8f6035",bg:"rgba(143,96,53,0.1)",  border:"rgba(143,96,53,0.3)",
+   units:[{id:"scomp",name:"土壤的組成",imp:3},{id:"soilstruct",name:"土壤內部構造與外顯特性",imp:2},{id:"class",name:"土壤指數與分類",imp:3},{id:"compact",name:"土壤夯實",imp:2},{id:"stress",name:"土壤中的應力",imp:3},{id:"perm",name:"土壤滲透性",imp:2},{id:"consol",name:"土壤壓縮性",imp:3},{id:"shear",name:"土壤剪力強度",imp:3}]},
 ];
 
-const IMP     = { stars:["","★","★★","★★★"], colors:["","#555","#c8922a","#d95f3b"] };
-const SCREENS = { HOME:"home", QUIZ:"quiz", RESULT:"result", PAPER:"paper" };
-const genId   = () => Math.random().toString(36).slice(2,10);
-const toBase64= (f) => new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); });
-const getSub  = (sid) => SUBJECTS.find(s=>s.id===sid);
+const EXAM_TYPES = [
+  {id:"tech_civil",   label:"技師【土木】",    short:"技師土木",  group:"技師"},
+  {id:"tech_struct",  label:"技師【結構】",    short:"技師結構",  group:"技師"},
+  {id:"tech_geo_old", label:"技師【大地(舊)】", short:"技師大地舊",group:"技師"},
+  {id:"tech_geo_new", label:"技師【大地(新)】", short:"技師大地新",group:"技師"},
+  {id:"highexam",     label:"高考",            short:"高考",      group:"其他"},
+  {id:"special",      label:"地特",            short:"地特",      group:"其他"},
+  {id:"pubexam",      label:"普考",            short:"普考",      group:"其他"},
+  {id:"state",        label:"國營",            short:"國營",      group:"其他"},
+  {id:"quiz",         label:"小考",            short:"小考",      group:"其他"},
+  {id:"textbook",     label:"課本",            short:"課本",      group:"其他"},
+  {id:"other",        label:"其他",            short:"其他",      group:"其他"},
+];
+
+const IMP     = {stars:["","★","★★","★★★"],colors:["","#555","#c8922a","#d95f3b"]};
+const SCREENS = {HOME:"home",QUIZ:"quiz",RESULT:"result",PAPER:"paper"};
+const getSub  = sid => SUBJECTS.find(s=>s.id===sid);
 const getUnit = (sid,uid) => getSub(sid)?.units.find(u=>u.id===uid);
+const fmtSrc  = (year,type) => { const p=[]; if(year) p.push(year+"年"); const t=EXAM_TYPES.find(e=>e.id===type); if(t) p.push(t.label); return p.join("・"); };
 
-// ════════════════════════════════════════════════════════════════════
-//  ROOT
-// ════════════════════════════════════════════════════════════════════
 function App() {
-  const [screen,   setScreen]  = useState(SCREENS.HOME);
-  const [bank,     setBank]    = useState(null);
-  const [binId,    setBinId]   = useState(null);
-  const [syncState,setSyncState]=useState("loading"); // loading | ok | saving | error
-  const [session,  setSession] = useState(null);
-  const [bankOpen, setBankOpen]= useState(false);
-  const [lb,       setLb]      = useState(null);
-  const saveTimer = useRef(null);
+  const [screen,    setScreen]    = useState(SCREENS.HOME);
+  const [bank,      setBank]      = useState(null);
+  const [syncState, setSyncState] = useState("loading");
+  const [session,   setSession]   = useState(null);
+  const [bankOpen,  setBankOpen]  = useState(false);
+  const [pwOpen,    setPwOpen]    = useState(false);
+  const [lb,        setLb]        = useState(null);
 
-  // Init
-  useEffect(()=>{
-    setSyncState("loading");
-    initBin()
-      .then(({ binId, data })=>{ setBinId(binId); setBank(data); setSyncState("ok"); })
-      .catch(()=>setSyncState("error"));
+  useEffect(()=>{ loadBank().then(d=>{setBank(d);setSyncState("ok");}).catch(()=>setSyncState("error")); },[]);
+
+  const refreshBank = useCallback(()=>{
+    setSyncState("saving");
+    loadBank().then(d=>{setBank([...d]);setSyncState("ok");}).catch(()=>setSyncState("error"));
   },[]);
 
-  // Debounced save to cloud
-  const persist = useCallback((nb) => {
-    setBank(nb);
-    setSyncState("saving");
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(()=>{
-      saveBin(binId, nb)
-        .then(()=>setSyncState("ok"))
-        .catch(()=>setSyncState("error"));
-    }, 1200);
-  }, [binId]);
-
-  const syncStatus = {
-    loading: { icon:"⟳", color:"#555",  label:"連線中…" },
-    saving:  { icon:"⟳", color:"#c8922a",label:"儲存中…" },
-    ok:      { icon:"●", color:"#3d9e6e",label:"已同步" },
-    error:   { icon:"✕", color:"#d95f3b",label:"同步失敗" },
-  }[syncState];
-
-  if (!bank) return (
-    <div style={{minHeight:"100vh",background:"#0b0c10",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"14px",color:"#555",fontFamily:"'IBM Plex Mono',monospace",fontSize:"13px"}}>
+  if(!bank) return (
+    <div style={{minHeight:"100vh",background:"#0b0c10",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:14,color:"#555",fontFamily:"monospace",fontSize:13}}>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet"/>
       {syncState==="error"
-        ? <><div style={{fontSize:"28px"}}>⚠️</div><div style={{color:"#d95f3b"}}>連線失敗</div><div style={{fontSize:"11px",color:"#444",textAlign:"center"}}>請確認網路連線後重新整理</div></>
-        : <><div style={{animation:"spin 1.2s linear infinite",display:"inline-block",fontSize:"24px"}}>⟳</div><div>連接雲端題庫中…</div></>
-      }
-      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+        ? <><div style={{fontSize:28}}>⚠️</div><div style={{color:"#d95f3b"}}>連線失敗，請重新整理</div></>
+        : <><div style={{animation:"spin 1.2s linear infinite",display:"inline-block",fontSize:24}}>⟳</div><div>連接雲端題庫中…</div></>}
     </div>
   );
+
+  const sc={loading:"#555",saving:"#c8922a",ok:"#3d9e6e",error:"#d95f3b"};
+  const sl={loading:"連線中",saving:"⟳ 同步中",ok:"● 已同步",error:"✕ 失敗"};
 
   return (
     <div style={{minHeight:"100vh",background:"#0b0c10",fontFamily:"'Noto Sans TC',sans-serif",color:"#d0d0de",display:"flex",flexDirection:"column",alignItems:"center"}}>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet"/>
-      <style>{`
-        *{box-sizing:border-box;} input,textarea{font-family:'Noto Sans TC',sans-serif;}
-        input::placeholder,textarea::placeholder{color:#252535;}
-        ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-thumb{background:#222232;border-radius:2px;}
-        button{transition:opacity .15s;} button:active{opacity:.7;}
-        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-        @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-        @media print{
-          .noprint{display:none!important;}
-          body,html{background:white!important;}
-          .paper-sheet{background:white!important;color:#111!important;border:none!important;padding:0!important;}
-          .paper-sheet *{color:#111!important;border-color:#ddd!important;}
-          .ans-box{background:#f0faf4!important;border-color:#b0ddc0!important;}
-        }
-      `}</style>
-      <div style={{position:"fixed",inset:0,pointerEvents:"none",backgroundImage:"linear-gradient(rgba(79,130,204,0.028) 1px,transparent 1px),linear-gradient(90deg,rgba(79,130,204,0.028) 1px,transparent 1px)",backgroundSize:"52px 52px"}}/>
-
-      <div style={{position:"relative",zIndex:1,width:"100%",maxWidth:"680px",minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-
-        {/* ── Top bar ── */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px 0"}} className="noprint">
+      <style>{`input,textarea,button{font-family:'Noto Sans TC',sans-serif;} input::placeholder,textarea::placeholder{color:#252535;} button{cursor:pointer;transition:opacity .15s;} button:active{opacity:.7;}`}</style>
+      <div style={{position:"fixed",inset:0,pointerEvents:"none",backgroundImage:"linear-gradient(rgba(79,130,204,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(79,130,204,0.025) 1px,transparent 1px)",backgroundSize:"52px 52px"}}/>
+      <div style={{position:"relative",zIndex:1,width:"100%",maxWidth:700,minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+        <div className="noprint" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px 0"}}>
           <div style={{cursor:screen!==SCREENS.HOME?"pointer":"default"}} onClick={()=>screen!==SCREENS.HOME&&setScreen(SCREENS.HOME)}>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"9px",letterSpacing:"4px",color:"#4f82cc",lineHeight:1}}>CIVIL ENG</div>
-            <div style={{fontSize:"16px",fontWeight:700,letterSpacing:"-.5px"}}>土木技師出題系統</div>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:4,color:"#4f82cc"}}>CIVIL ENG</div>
+            <div style={{fontSize:16,fontWeight:700}}>土木技師出題系統</div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-            {/* Sync indicator */}
-            <div style={{display:"flex",alignItems:"center",gap:"5px",fontSize:"11px",color:syncStatus.color,fontFamily:"'IBM Plex Mono',monospace"}}>
-              <span style={{animation:syncState==="saving"||syncState==="loading"?"spin 1.2s linear infinite":"none",display:"inline-block"}}>{syncStatus.icon}</span>
-              <span style={{display:["ok","error"].includes(syncState)?"inline":"inline"}}>{syncStatus.label}</span>
-            </div>
-            {/* Bank button */}
-            <button onClick={()=>setBankOpen(true)} style={{display:"flex",alignItems:"center",gap:"6px",padding:"7px 12px",borderRadius:"8px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.09)",color:"#666",fontSize:"12px",cursor:"pointer"}}>
-              <span>🗄</span><span>題庫</span>
-              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"11px",color:"#4f82cc",fontWeight:600}}>{bank.length}</span>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:11,color:sc[syncState],fontFamily:"monospace"}}>{sl[syncState]}</span>
+            <button onClick={()=>setPwOpen(true)} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderRadius:8,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.09)",color:"#666",fontSize:12}}>
+              🗄 題庫 <span style={{color:"#4f82cc",fontWeight:700,fontFamily:"monospace"}}>{bank.length}</span>
             </button>
           </div>
         </div>
-
-        {/* ── Content ── */}
         <div style={{flex:1,padding:"16px 20px 60px"}}>
-          {screen===SCREENS.HOME   && <HomeScreen   bank={bank} onStart={(s)=>{setSession(s);setScreen(SCREENS.QUIZ);}} onPaper={(s)=>{setSession(s);setScreen(SCREENS.PAPER);}}/>}
+          {screen===SCREENS.HOME   && <HomeScreen bank={bank} onStart={s=>{setSession(s);setScreen(SCREENS.QUIZ);}} onPaper={s=>{setSession(s);setScreen(SCREENS.PAPER);}} setLb={setLb}/>}
           {screen===SCREENS.QUIZ   && session && <QuizScreen   session={session} setSession={setSession} setScreen={setScreen} setLb={setLb}/>}
           {screen===SCREENS.RESULT && session && <ResultScreen session={session} setSession={setSession} setScreen={setScreen} setLb={setLb}/>}
           {screen===SCREENS.PAPER  && session && <PaperScreen  session={session} setScreen={setScreen} setLb={setLb}/>}
         </div>
       </div>
-
-      {bankOpen && <BankDrawer bank={bank} persist={persist} syncState={syncState} onClose={()=>setBankOpen(false)} setLb={setLb}/>}
-      {lb && <Lightbox src={lb.src} title={lb.title} onClose={()=>setLb(null)}/>}
+      {pwOpen  && <PwModal    onSuccess={()=>{setPwOpen(false);setBankOpen(true);}} onClose={()=>setPwOpen(false)}/>}
+      {bankOpen && <BankPage  bank={bank} refreshBank={refreshBank} syncState={syncState} onClose={()=>setBankOpen(false)} setLb={setLb}/>}
+      {lb      && <Lightbox  src={lb.src} title={lb.title} onClose={()=>setLb(null)}/>}
     </div>
   );
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  HOME SCREEN
-// ════════════════════════════════════════════════════════════════════
-function HomeScreen({ bank, onStart, onPaper }) {
-  const [selKeys, setSelKeys] = useState([]);
-  const [qCount,  setQCount]  = useState(10);
-  const [byUnit,  setByUnit]  = useState(true);
-  const [mode,    setMode]    = useState("quiz");
-  const [openSid, setOpenSid] = useState(null);
+function HomeScreen({ bank, onStart, onPaper, setLb }) {
+  const [selKeys, setSelKeys]   = useState([]);
+  const [qCount,  setQCount]    = useState(10);
+  const [byUnit,  setByUnit]    = useState(true);
+  const [mode,    setMode]      = useState("quiz");
+  const [openSid, setOpenSid]   = useState(null);
+  const [searchText,  setST]    = useState("");
+  const [filterSids,  setFS]    = useState([]);
+  const [filterTypes, setFT]    = useState([]);
+  const [filterYear,  setFY]    = useState("");
+  const [searchResult,setSR]    = useState(null);
+  const [showFilter,  setSF]    = useState(false);
 
-  const bk     = (sid,uid) => `${sid}_${uid}`;
+  const bk     = (sid,uid) => sid+"_"+uid;
   const cntFor = (sid,uid) => bank.filter(q=>q.sid===sid&&q.uid===uid).length;
   const totalSel = selKeys.reduce((s,k)=>{ const[a,b]=k.split("_"); return s+cntFor(a,b); },0);
-  const toggle = k => setSelKeys(p=>p.includes(k)?p.filter(x=>x!==k):[...p,k]);
+  const toggle   = k => setSelKeys(p=>p.includes(k)?p.filter(x=>x!==k):[...p,k]);
   const toggleSub = sub => {
     const keys=sub.units.filter(u=>cntFor(sub.id,u.id)>0).map(u=>bk(sub.id,u.id));
     const all=keys.length>0&&keys.every(k=>selKeys.includes(k));
     setSelKeys(p=>all?p.filter(k=>!keys.includes(k)):[...new Set([...p,...keys])]);
   };
 
-  const go = () => {
-    if (!totalSel) return;
-    const pool = selKeys.flatMap(k=>{ const[a,b]=k.split("_"); return bank.filter(q=>q.sid===a&&q.uid===b); });
-    const picked = [...pool].sort(()=>Math.random()-.5).slice(0,Math.min(qCount,pool.length));
-    const final = byUnit ? [...picked].sort((a,b)=>{
-      const si=SUBJECTS.findIndex(s=>s.id===a.sid)-SUBJECTS.findIndex(s=>s.id===b.sid);
-      if(si!==0) return si;
-      return getSub(a.sid).units.findIndex(u=>u.id===a.uid)-getSub(a.sid).units.findIndex(u=>u.id===b.uid);
-    }) : picked;
-    const sess = { questions:final, qIdx:0, showAns:false, results:[], byUnit };
-    if (mode==="paper") onPaper(sess); else onStart(sess);
+  const doSearch = () => {
+    const kwds = searchText.trim().toLowerCase().split(" ").filter(Boolean);
+    const res = bank.filter((q,idx)=>{
+      const sub=getSub(q.sid), unit=getUnit(q.sid,q.uid);
+      const tl=(EXAM_TYPES.find(e=>e.id===q.source_type)?.label||"").toLowerCase();
+      const ts=(EXAM_TYPES.find(e=>e.id===q.source_type)?.short||"").toLowerCase();
+      const hay=[q.source_year||"",tl,ts,sub?.name||"",sub?.short||"",unit?.name||"",String(idx+1)].join(" ").toLowerCase();
+      const textOk = kwds.length===0 || kwds.every(k=>{
+        const stripped=k.replace(/^#/,"");
+        return hay.includes(k) || (stripped&&String(idx+1)===stripped);
+      });
+      const sidOk  = filterSids.length===0  || filterSids.includes(q.sid);
+      const typeOk = filterTypes.length===0 || filterTypes.includes(q.source_type);
+      const yearOk = !filterYear || (q.source_year||"").includes(filterYear.trim());
+      return textOk&&sidOk&&typeOk&&yearOk;
+    }).map(q=>({...q,displayNum:bank.indexOf(q)+1}));
+    setSR({found:res});
   };
 
+  const clearAll = () => { setSR(null); setST(""); setFS([]); setFT([]); setFY(""); setSF(false); };
+  const hasFilter = filterSids.length>0||filterTypes.length>0||filterYear;
   const activeSubs = SUBJECTS.filter(sub=>sub.units.some(u=>cntFor(sub.id,u.id)>0));
+
+  const go = () => {
+    if(!totalSel) return;
+    const pool=selKeys.flatMap(k=>{const[a,b]=k.split("_");return bank.filter(q=>q.sid===a&&q.uid===b);});
+    const picked=[...pool].sort(()=>Math.random()-.5).slice(0,Math.min(qCount,pool.length));
+    const final=byUnit?[...picked].sort((a,b)=>{
+      const si=SUBJECTS.findIndex(s=>s.id===a.sid)-SUBJECTS.findIndex(s=>s.id===b.sid);
+      if(si!==0)return si;
+      return getSub(a.sid).units.findIndex(u=>u.id===a.uid)-getSub(a.sid).units.findIndex(u=>u.id===b.uid);
+    }):picked;
+    mode==="paper"?onPaper({questions:final,qIdx:0,showAns:false,results:[],byUnit}):onStart({questions:final,qIdx:0,showAns:false,results:[],byUnit});
+  };
 
   return (
     <div style={{animation:"fadein .4s ease"}}>
-      <div style={{padding:"28px 0 24px",textAlign:"center"}}>
-        <div style={{fontSize:"clamp(28px,6vw,42px)",fontWeight:700,letterSpacing:"-1px",lineHeight:1.1,marginBottom:"8px"}}>隨機出題</div>
-        <div style={{fontSize:"13px",color:"#555"}}>選擇範圍 · 設定題數 · 開始作答</div>
+      {/* Search */}
+      <div style={{marginBottom:20,paddingTop:16}}>
+        <div style={{fontSize:11,color:"#555",marginBottom:8,fontFamily:"monospace",letterSpacing:1}}>🔍 查找題目</div>
+        <div style={{display:"flex",gap:7,marginBottom:8}}>
+          <input value={searchText} onChange={e=>setST(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch()}
+            placeholder="關鍵字用空格分隔（年份、類別、科目、#題號）"
+            style={{flex:1,padding:"10px 14px",borderRadius:9,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",color:"#ddd",fontSize:13,outline:"none"}}/>
+          <button onClick={()=>setSF(v=>!v)} style={{padding:"10px 13px",borderRadius:9,fontSize:13,fontWeight:showFilter||hasFilter?700:400,background:showFilter||hasFilter?"rgba(79,130,204,0.15)":"rgba(255,255,255,0.04)",border:"1px solid "+(showFilter||hasFilter?"rgba(79,130,204,0.4)":"rgba(255,255,255,0.09)"),color:showFilter||hasFilter?"#4f82cc":"#666",whiteSpace:"nowrap"}}>
+            篩選{hasFilter?" ●":""}
+          </button>
+          <button onClick={doSearch} style={{padding:"10px 16px",borderRadius:9,background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",color:"white",fontSize:13,fontWeight:700,whiteSpace:"nowrap"}}>查找</button>
+        </div>
+        {showFilter&&(
+          <div style={{padding:14,borderRadius:10,background:"rgba(79,130,204,0.05)",border:"1px solid rgba(79,130,204,0.15)",marginBottom:8,display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:11,color:"#888",flexShrink:0}}>年份</span>
+              <input value={filterYear} onChange={e=>setFY(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="例：113"
+                style={{width:80,padding:"4px 9px",borderRadius:6,background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#ddd",fontSize:12,outline:"none",textAlign:"center"}}/>
+              <span style={{fontSize:11,color:"#555"}}>年</span>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"#888",marginBottom:6}}>科目</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {SUBJECTS.map(s=>{ const sel=filterSids.includes(s.id);
+                  return <button key={s.id} onClick={()=>setFS(p=>sel?p.filter(x=>x!==s.id):[...p,s.id])}
+                    style={{padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:sel?700:400,background:sel?s.bg:"rgba(255,255,255,0.03)",border:"1px solid "+(sel?s.border:"rgba(255,255,255,0.07)"),color:sel?s.color:"#666"}}>
+                    {sel?"✓ ":""}{s.short}
+                  </button>;
+                })}
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"#888",marginBottom:6}}>類別</div>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {EXAM_TYPES.map(e=>{ const sel=filterTypes.includes(e.id);
+                  return <button key={e.id} onClick={()=>setFT(p=>sel?p.filter(x=>x!==e.id):[...p,e.id])}
+                    style={{padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:sel?700:400,background:sel?"rgba(79,130,204,0.14)":"rgba(255,255,255,0.03)",border:"1px solid "+(sel?"rgba(79,130,204,0.4)":"rgba(255,255,255,0.07)"),color:sel?"#4f82cc":"#666"}}>
+                    {sel?"✓ ":""}{e.label}
+                  </button>;
+                })}
+              </div>
+            </div>
+            <button onClick={clearAll} style={{alignSelf:"flex-end",padding:"4px 12px",borderRadius:6,fontSize:11,background:"transparent",border:"1px solid rgba(255,255,255,0.08)",color:"#555"}}>清除全部</button>
+          </div>
+        )}
+        {searchResult&&(
+          <div style={{borderRadius:10,background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.07)",overflow:"hidden"}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div style={{fontSize:12,color:"#888"}}>找到 <span style={{color:"#4f82cc",fontWeight:700}}>{searchResult.found.length}</span> 題</div>
+              <button onClick={()=>setSR(null)} style={{background:"transparent",border:"none",color:"#444",fontSize:16}}>✕</button>
+            </div>
+            {searchResult.found.length===0
+              ? <div style={{padding:24,textAlign:"center",color:"#444",fontSize:13}}>找不到符合的題目</div>
+              : <div style={{maxHeight:480,overflowY:"auto"}}>
+                  {searchResult.found.map((q,i)=>{
+                    const sub=getSub(q.sid),unit=getUnit(q.sid,q.uid),src=fmtSrc(q.source_year,q.source_type);
+                    return (
+                      <div key={q.id} style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+                          <span style={{fontFamily:"monospace",fontSize:11,color:"#4f82cc",fontWeight:700}}>#{q.displayNum}</span>
+                          <Pill color={sub?.color} bg={sub?.bg} border={sub?.border}>{sub?.short}</Pill>
+                          <Pill color="#555" bg="rgba(255,255,255,0.03)" border="rgba(255,255,255,0.06)">{unit?.name}</Pill>
+                          {src&&<span style={{fontSize:10,color:"#666"}}>📌 {src}</span>}
+                        </div>
+                        {q.q_url&&<div style={{marginBottom:6}}>
+                          <div style={{fontSize:10,color:"#4f82cc",marginBottom:3}}>🖼 題目（點擊放大）</div>
+                          <img src={q.q_url} onClick={()=>setLb({src:q.q_url,title:"#"+q.displayNum+" 題目"})} style={{width:"100%",height:"auto",display:"block",borderRadius:7,cursor:"pointer",border:"1px solid rgba(255,255,255,0.07)"}} alt="q"/>
+                        </div>}
+                        {q.a_url&&<div style={{marginBottom:6}}>
+                          <div style={{fontSize:10,color:"#3d9e6e",marginBottom:3}}>✓ 答案（點擊放大）</div>
+                          <img src={q.a_url} onClick={()=>setLb({src:q.a_url,title:"#"+q.displayNum+" 答案"})} style={{width:"100%",height:"auto",display:"block",borderRadius:7,cursor:"pointer",border:"1px solid rgba(61,158,110,0.2)",background:"rgba(61,158,110,0.03)"}} alt="a"/>
+                        </div>}
+                        {q.explanation&&<div style={{fontSize:11,color:"#9b6bbf",background:"rgba(114,85,184,0.07)",border:"1px solid rgba(114,85,184,0.15)",borderRadius:6,padding:"6px 9px",lineHeight:1.7}}>
+                          🤖 {q.explanation.slice(0,250)}{q.explanation.length>250?"…":""}
+                        </div>}
+                      </div>
+                    );
+                  })}
+                </div>
+            }
+          </div>
+        )}
       </div>
 
-      {activeSubs.length===0 ? (
-        <div style={{textAlign:"center",padding:"48px 20px",background:"rgba(255,255,255,0.02)",borderRadius:"14px",border:"1px dashed rgba(255,255,255,0.07)",color:"#444"}}>
-          <div style={{fontSize:"36px",marginBottom:"12px"}}>📭</div>
-          <div style={{fontSize:"14px",color:"#555",marginBottom:"6px"}}>題庫是空的</div>
-          <div style={{fontSize:"12px",color:"#333"}}>點右上角「🗄 題庫」按鈕上傳題目</div>
-        </div>
-      ) : (
-        <>
-          <div style={{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"20px"}}>
+      <div style={{padding:"4px 0 20px",textAlign:"center"}}>
+        <div style={{fontSize:"clamp(24px,5vw,38px)",fontWeight:700,letterSpacing:-1,marginBottom:6}}>隨機出題</div>
+        <div style={{fontSize:13,color:"#555"}}>選擇範圍 · 設定題數 · 開始作答</div>
+      </div>
+
+      {activeSubs.length===0
+        ? <div style={{textAlign:"center",padding:"48px 20px",background:"rgba(255,255,255,0.02)",borderRadius:14,border:"1px dashed rgba(255,255,255,0.07)",color:"#444"}}>
+            <div style={{fontSize:36,marginBottom:12}}>📭</div>
+            <div style={{fontSize:14,color:"#555",marginBottom:6}}>題庫是空的</div>
+            <div style={{fontSize:12,color:"#333"}}>點右上角「🗄 題庫」上傳題目</div>
+          </div>
+        : <>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:20}}>
             {activeSubs.map(sub=>{
               const subCnt=bank.filter(q=>q.sid===sub.id).length;
               const selCnt=sub.units.filter(u=>selKeys.includes(bk(sub.id,u.id))).length;
               const allSel=sub.units.filter(u=>cntFor(sub.id,u.id)>0).every(u=>selKeys.includes(bk(sub.id,u.id)));
               const open=openSid===sub.id;
               return (
-                <div key={sub.id} style={{borderRadius:"11px",border:`1px solid ${selCnt>0?sub.border:"rgba(255,255,255,0.07)"}`,background:selCnt>0?sub.bg:"rgba(255,255,255,0.02)",overflow:"hidden",transition:"border .2s,background .2s"}}>
-                  <div style={{display:"flex",alignItems:"center",padding:"11px 14px",gap:"8px",cursor:"pointer"}} onClick={()=>setOpenSid(open?null:sub.id)}>
-                    <div onClick={e=>{e.stopPropagation();toggleSub(sub);}} style={{width:22,height:22,borderRadius:6,flexShrink:0,background:allSel?sub.color:"transparent",border:`2px solid ${allSel?sub.color:selCnt>0?sub.color+"88":"#333"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"white",cursor:"pointer"}}>
-                      {allSel?"✓":selCnt>0?<div style={{width:8,height:8,borderRadius:2,background:sub.color}}/>:""}
+                <div key={sub.id} style={{borderRadius:11,border:"1px solid "+(selCnt>0?sub.border:"rgba(255,255,255,0.07)"),background:selCnt>0?sub.bg:"rgba(255,255,255,0.02)",overflow:"hidden",transition:"border .2s"}}>
+                  <div style={{display:"flex",alignItems:"center",padding:"11px 14px",gap:8,cursor:"pointer"}} onClick={()=>setOpenSid(open?null:sub.id)}>
+                    <div onClick={e=>{e.stopPropagation();toggleSub(sub);}} style={{width:22,height:22,borderRadius:6,flexShrink:0,background:allSel?sub.color:"transparent",border:"2px solid "+(allSel?sub.color:selCnt>0?sub.color+"88":"#333"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"white",cursor:"pointer"}}>
+                      {allSel?"✓":selCnt>0&&<div style={{width:8,height:8,borderRadius:2,background:sub.color}}/>}
                     </div>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:"14px",fontWeight:700,color:selCnt>0?sub.color:"#aaa"}}>{sub.name}</div>
-                      <div style={{fontSize:"11px",color:"#444",marginTop:"1px"}}>{selCnt>0?`已選 ${selCnt} 單元 · `:""}{subCnt} 題</div>
+                      <div style={{fontSize:14,fontWeight:700,color:selCnt>0?sub.color:"#aaa"}}>{sub.name}</div>
+                      <div style={{fontSize:11,color:"#444",marginTop:1}}>{selCnt>0?"已選 "+selCnt+" 單元 · ":""}{subCnt} 題</div>
                     </div>
-                    <div style={{fontSize:"12px",color:"#444",transform:open?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</div>
+                    <div style={{fontSize:12,color:"#444",transform:open?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</div>
                   </div>
                   {open&&(
-                    <div style={{padding:"0 14px 12px",display:"flex",gap:"6px",flexWrap:"wrap",borderTop:"1px solid rgba(255,255,255,0.04)"}}>
+                    <div style={{padding:"0 14px 12px",display:"flex",gap:6,flexWrap:"wrap",borderTop:"1px solid rgba(255,255,255,0.04)"}}>
                       {sub.units.filter(u=>cntFor(sub.id,u.id)>0).map(u=>{
                         const cnt=cntFor(sub.id,u.id),k=bk(sub.id,u.id),sel=selKeys.includes(k);
-                        return (
-                          <button key={u.id} onClick={()=>toggle(k)} style={{marginTop:"7px",padding:"5px 11px",borderRadius:"7px",fontSize:"12px",display:"flex",alignItems:"center",gap:"4px",background:sel?sub.bg:"rgba(255,255,255,0.03)",border:`1px solid ${sel?sub.border:"rgba(255,255,255,0.07)"}`,color:sel?sub.color:"#666",cursor:"pointer",fontWeight:sel?700:400}}>
-                            <span style={{fontSize:"9px",color:IMP.colors[u.imp]}}>{IMP.stars[u.imp]}</span>
-                            {u.name}
-                            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"10px",opacity:.6}}>{cnt}</span>
-                          </button>
-                        );
+                        return <button key={u.id} onClick={()=>toggle(k)} style={{marginTop:7,padding:"5px 11px",borderRadius:7,fontSize:12,display:"flex",alignItems:"center",gap:4,background:sel?sub.bg:"rgba(255,255,255,0.03)",border:"1px solid "+(sel?sub.border:"rgba(255,255,255,0.07)"),color:sel?sub.color:"#666",fontWeight:sel?700:400}}>
+                          <span style={{fontSize:9,color:IMP.colors[u.imp]}}>{IMP.stars[u.imp]}</span>{u.name}<span style={{fontFamily:"monospace",fontSize:10,opacity:.6}}>{cnt}</span>
+                        </button>;
                       })}
                     </div>
                   )}
@@ -292,235 +334,222 @@ function HomeScreen({ bank, onStart, onPaper }) {
               );
             })}
           </div>
-
           {totalSel>0&&(
-            <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:"12px",padding:"16px",marginBottom:"16px"}}>
-              <div style={{display:"flex",gap:"7px",marginBottom:"14px"}}>
+            <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:12,padding:16,marginBottom:16}}>
+              <div style={{display:"flex",gap:7,marginBottom:14}}>
                 {[{v:"quiz",icon:"✏️",l:"互動作答"},{v:"paper",icon:"🖨",l:"產出考卷"}].map(({v,icon,l})=>(
-                  <button key={v} onClick={()=>setMode(v)} style={{flex:1,padding:"9px",borderRadius:"9px",fontSize:"13px",fontWeight:mode===v?700:400,background:mode===v?"rgba(79,130,204,0.14)":"rgba(255,255,255,0.02)",border:`1px solid ${mode===v?"rgba(79,130,204,0.35)":"rgba(255,255,255,0.07)"}`,color:mode===v?"#4f82cc":"#666",cursor:"pointer"}}>{icon} {l}</button>
+                  <button key={v} onClick={()=>setMode(v)} style={{flex:1,padding:9,borderRadius:9,fontSize:13,fontWeight:mode===v?700:400,background:mode===v?"rgba(79,130,204,0.14)":"rgba(255,255,255,0.02)",border:"1px solid "+(mode===v?"rgba(79,130,204,0.35)":"rgba(255,255,255,0.07)"),color:mode===v?"#4f82cc":"#666"}}>{icon} {l}</button>
                 ))}
               </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"14px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
                 <div>
-                  <div style={{fontSize:"13px",color:"#a0a0b8"}}>依單元分組</div>
-                  <div style={{fontSize:"10px",color:"#3e3e50",marginTop:"1px"}}>{byUnit?"按科目／單元排列":"隨機混合順序"}</div>
+                  <div style={{fontSize:13,color:"#a0a0b8"}}>依單元分組</div>
+                  <div style={{fontSize:10,color:"#3e3e50",marginTop:1}}>{byUnit?"按科目／單元排列":"隨機混合"}</div>
                 </div>
                 <Toggle val={byUnit} set={setByUnit}/>
               </div>
               <div>
-                <div style={{fontSize:"12px",color:"#666",marginBottom:"8px"}}>
-                  題數：<span style={{color:"#4f82cc",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:"14px"}}>{Math.min(qCount,totalSel)}</span>
-                  <span style={{color:"#333",marginLeft:4}}>/ {totalSel} 題可用</span>
-                </div>
-                <div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}>
+                <div style={{fontSize:12,color:"#666",marginBottom:8}}>題數：<span style={{color:"#4f82cc",fontFamily:"monospace",fontWeight:700,fontSize:14}}>{Math.min(qCount,totalSel)}</span><span style={{color:"#333",marginLeft:4}}>/ {totalSel} 可用</span></div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                   {[5,10,15,20,25,30].filter(n=>n<=totalSel+4).map(n=>(
                     <button key={n} onClick={()=>setQCount(n)} disabled={n>totalSel}
-                      style={{padding:"6px 13px",borderRadius:"7px",fontSize:"13px",fontWeight:qCount===n?700:400,background:qCount===n?"rgba(79,130,204,0.14)":"rgba(255,255,255,0.03)",border:`1px solid ${qCount===n?"rgba(79,130,204,0.35)":"rgba(255,255,255,0.07)"}`,color:n>totalSel?"#1e1e2e":qCount===n?"#4f82cc":"#666",cursor:n>totalSel?"not-allowed":"pointer"}}>{n}</button>
+                      style={{padding:"6px 13px",borderRadius:7,fontSize:13,fontWeight:qCount===n?700:400,background:qCount===n?"rgba(79,130,204,0.14)":"rgba(255,255,255,0.03)",border:"1px solid "+(qCount===n?"rgba(79,130,204,0.35)":"rgba(255,255,255,0.07)"),color:n>totalSel?"#1e1e2e":qCount===n?"#4f82cc":"#666"}}>{n}</button>
                   ))}
                   <input type="number" min={1} max={totalSel} value={qCount} onChange={e=>setQCount(Math.max(1,Math.min(totalSel,parseInt(e.target.value)||1)))}
-                    style={{width:60,padding:"6px 8px",borderRadius:"7px",fontSize:"13px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.09)",color:"#aaa",outline:"none",textAlign:"center"}}/>
+                    style={{width:60,padding:"6px 8px",borderRadius:7,fontSize:13,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.09)",color:"#aaa",outline:"none",textAlign:"center"}}/>
                 </div>
               </div>
             </div>
           )}
-
-          <button onClick={go} disabled={!totalSel} style={{width:"100%",padding:"16px",borderRadius:"13px",fontSize:"17px",fontWeight:700,background:totalSel?"linear-gradient(135deg,#4f82cc,#2f5fa0)":"rgba(255,255,255,0.03)",border:"none",color:totalSel?"white":"#1e1e2e",cursor:totalSel?"pointer":"not-allowed",boxShadow:totalSel?"0 6px 24px rgba(79,130,204,0.3)":"none",letterSpacing:".5px"}}>
-            {!totalSel?"請先選擇科目範圍":mode==="paper"?`產出 ${Math.min(qCount,totalSel)} 題考卷`:`開始 ${Math.min(qCount,totalSel)} 題作答 →`}
+          <button onClick={go} disabled={!totalSel} style={{width:"100%",padding:16,borderRadius:13,fontSize:17,fontWeight:700,background:totalSel?"linear-gradient(135deg,#4f82cc,#2f5fa0)":"rgba(255,255,255,0.03)",border:"none",color:totalSel?"white":"#1e1e2e",boxShadow:totalSel?"0 6px 24px rgba(79,130,204,0.3)":"none"}}>
+            {!totalSel?"請先選擇科目範圍":mode==="paper"?"產出 "+Math.min(qCount,totalSel)+" 題考卷":"開始 "+Math.min(qCount,totalSel)+" 題作答 →"}
           </button>
         </>
-      )}
+      }
     </div>
   );
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  QUIZ SCREEN
-// ════════════════════════════════════════════════════════════════════
 function QuizScreen({ session, setSession, setScreen, setLb }) {
-  const { questions, qIdx, showAns } = session;
-  const q    = questions[qIdx];
-  const sub  = getSub(q?.sid);
-  const unit = getUnit(q?.sid,q?.uid);
-
-  const reveal = () => setSession(s=>({...s,showAns:true}));
-  const mark = (correct) => {
-    const nr = [...session.results,{...q,correct}];
-    if (qIdx+1>=questions.length) { setSession(s=>({...s,results:nr})); setScreen(SCREENS.RESULT); }
+  const {questions,qIdx,showAns}=session;
+  const [showExp,  setShowExp]  = useState(false);
+  const [ansPwOpen,setAnsPwOpen]= useState(false);
+  const prevIdx=useRef(qIdx);
+  const q=questions[qIdx],sub=getSub(q?.sid),unit=getUnit(q?.sid,q?.uid);
+  useEffect(()=>{if(prevIdx.current!==qIdx){setShowExp(false);prevIdx.current=qIdx;}},[qIdx]);
+  const reveal=()=>setAnsPwOpen(true);
+  const onAnsUnlock=()=>{ setAnsPwOpen(false); setSession(s=>({...s,showAns:true})); };
+  const mark=correct=>{
+    const nr=[...session.results,{...q,correct}];
+    if(qIdx+1>=questions.length){setSession(s=>({...s,results:nr}));setScreen(SCREENS.RESULT);}
     else setSession(s=>({...s,results:nr,qIdx:qIdx+1,showAns:false}));
   };
-
-  if (!q) return null;
+  if(!q) return null;
   return (
     <div style={{animation:"fadein .3s ease"}}>
-      <div style={{height:"3px",background:"rgba(255,255,255,0.06)",borderRadius:"2px",marginBottom:"16px",overflow:"hidden"}}>
-        <div style={{height:"100%",background:`linear-gradient(90deg,${sub.color},${sub.color}88)`,width:`${((qIdx+1)/questions.length)*100}%`,transition:"width .4s ease",borderRadius:"2px"}}/>
+      <div style={{height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,marginBottom:16,overflow:"hidden"}}>
+        <div style={{height:"100%",background:"linear-gradient(90deg,"+sub.color+","+sub.color+"88)",width:((qIdx+1)/questions.length*100)+"%",transition:"width .4s",borderRadius:2}}/>
       </div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px"}}>
-        <div style={{display:"flex",gap:"5px"}}>
-          <Pill color={sub.color} bg={sub.bg} border={sub.border}>{sub.name}</Pill>
-          <Pill color="#555" bg="rgba(255,255,255,0.03)" border="rgba(255,255,255,0.06)">{unit?.name}</Pill>
-        </div>
-        <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"13px",color:"#444",fontWeight:600}}>{qIdx+1}<span style={{color:"#252535"}}>/{questions.length}</span></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+        <div style={{display:"flex",gap:5}}><Pill color={sub.color} bg={sub.bg} border={sub.border}>{sub.name}</Pill><Pill color="#555" bg="rgba(255,255,255,0.03)" border="rgba(255,255,255,0.06)">{unit?.name}</Pill></div>
+        <div style={{fontFamily:"monospace",fontSize:13,color:"#444",fontWeight:600}}>{qIdx+1}<span style={{color:"#252535"}}>/{questions.length}</span></div>
       </div>
-      {(q.source||unit?.imp)&&(
-        <div style={{fontSize:"11px",color:"#555",marginBottom:"12px",display:"flex",gap:"10px"}}>
-          {q.source&&<span>📌 {q.source}</span>}
+      {(q.source_year||q.source_type||unit?.imp)&&(
+        <div style={{fontSize:11,color:"#555",marginBottom:12,display:"flex",gap:10,flexWrap:"wrap"}}>
+          {(q.source_year||q.source_type)&&<span>📌 {fmtSrc(q.source_year,q.source_type)}</span>}
           {unit?.imp&&<span style={{color:IMP.colors[unit.imp]}}>{IMP.stars[unit.imp]} 重要度 {unit.imp}</span>}
         </div>
       )}
-      <div style={{borderRadius:"12px",overflow:"hidden",background:"rgba(255,255,255,0.025)",border:`1px solid ${showAns?"rgba(255,255,255,0.06)":sub.border}`,marginBottom:"16px",cursor:q.qImg?"pointer":"default",transition:"border .3s"}}
-        onClick={()=>q.qImg&&setLb({src:q.qImg,title:`題目 ${qIdx+1}`})}>
-        {q.qImg?<img src={q.qImg} style={{width:"100%",display:"block",maxHeight:"400px",objectFit:"contain",padding:"10px"}} alt="q"/>
-               :<div style={{padding:"48px",textAlign:"center",color:"#2a2a3a",fontSize:"13px"}}>無題目圖片</div>}
+      <div style={{borderRadius:12,overflow:"hidden",background:"rgba(255,255,255,0.025)",border:"1px solid "+(showAns?"rgba(255,255,255,0.06)":sub.border),marginBottom:16,cursor:q.q_url?"pointer":"default",transition:"border .3s"}}
+        onClick={()=>q.q_url&&setLb({src:q.q_url,title:"題目 "+(qIdx+1)})}>
+        {q.q_url?<img src={q.q_url} style={{width:"100%",display:"block",objectFit:"contain",padding:10,maxHeight:400}} alt="q"/>
+                :<div style={{padding:48,textAlign:"center",color:"#2a2a3a",fontSize:13}}>無題目圖片</div>}
       </div>
-      {!showAns ? (
-        <button onClick={reveal} style={{width:"100%",padding:"15px",borderRadius:"12px",fontWeight:700,fontSize:"16px",background:`linear-gradient(135deg,${sub.color},${sub.color}aa)`,border:"none",color:"#fff",cursor:"pointer",boxShadow:`0 4px 20px ${sub.color}44`,letterSpacing:".5px"}}>顯示答案</button>
-      ) : (
-        <div style={{animation:"fadein .3s ease"}}>
-          <div style={{borderRadius:"12px",overflow:"hidden",background:"rgba(61,158,110,0.06)",border:"1px solid rgba(61,158,110,0.22)",marginBottom:"14px",cursor:q.aImg?"pointer":"default"}}
-            onClick={()=>q.aImg&&setLb({src:q.aImg,title:`答案 ${qIdx+1}`})}>
-            {q.aImg?<img src={q.aImg} style={{width:"100%",display:"block",maxHeight:"400px",objectFit:"contain",padding:"10px"}} alt="a"/>
-                   :<div style={{padding:"24px",textAlign:"center",color:"#2a4a3a",fontSize:"13px"}}>（未上傳答案圖片）</div>}
+      {!showAns
+        ? <button onClick={reveal} style={{width:"100%",padding:15,borderRadius:12,fontWeight:700,fontSize:16,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"aa)",border:"none",color:"#fff",boxShadow:"0 4px 20px "+sub.color+"44"}}>顯示答案</button>
+        : <div style={{animation:"fadein .3s ease"}}>
+            <div style={{borderRadius:12,overflow:"hidden",background:"rgba(61,158,110,0.06)",border:"1px solid rgba(61,158,110,0.22)",marginBottom:14,cursor:q.a_url?"pointer":"default"}}
+              onClick={()=>q.a_url&&setLb({src:q.a_url,title:"答案 "+(qIdx+1)})}>
+              {q.a_url?<img src={q.a_url} style={{width:"100%",display:"block",objectFit:"contain",padding:10,maxHeight:400}} alt="a"/>
+                      :<div style={{padding:24,textAlign:"center",color:"#2a4a3a",fontSize:13}}>（未上傳答案圖片）</div>}
+            </div>
+            {ansPwOpen && <AnsPwModal onSuccess={onAnsUnlock} onClose={()=>setAnsPwOpen(false)}/>}
+            {q.explanation
+              ? <div className="noprint" style={{marginBottom:14}}>
+                  {!showExp
+                    ? <button onClick={()=>setShowExp(true)} style={{width:"100%",padding:11,borderRadius:10,fontSize:13,fontWeight:600,background:"rgba(114,85,184,0.1)",border:"1px solid rgba(114,85,184,0.3)",color:"#9b6bbf",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🤖 AI 解題說明</button>
+                    : <div style={{borderRadius:10,background:"rgba(114,85,184,0.06)",border:"1px solid rgba(114,85,184,0.2)",overflow:"hidden"}}>
+                        <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(114,85,184,0.15)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{fontSize:12,fontWeight:700,color:"#9b6bbf"}}>🤖 AI 解題說明</span>
+                          <button onClick={()=>setShowExp(false)} style={{fontSize:11,color:"#555",background:"transparent",border:"none"}}>收起</button>
+                        </div>
+                        <div style={{padding:"14px 16px",fontSize:13,color:"#c0c0d8",lineHeight:1.9,whiteSpace:"pre-wrap"}}>{q.explanation}</div>
+                      </div>
+                  }
+                </div>
+              : <div className="noprint" style={{marginBottom:14,padding:"9px 14px",borderRadius:10,background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",fontSize:12,color:"#3a3a4a",textAlign:"center"}}>此題無 AI 題解</div>
+            }
+            <div style={{fontSize:12,color:"#555",textAlign:"center",marginBottom:10}}>你答對了嗎？</div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>mark(false)} style={{flex:1,padding:14,borderRadius:12,fontWeight:700,fontSize:15,background:"rgba(217,95,59,0.1)",border:"1px solid rgba(217,95,59,0.3)",color:"#d95f3b"}}>✗ 答錯了</button>
+              <button onClick={()=>mark(true)}  style={{flex:1,padding:14,borderRadius:12,fontWeight:700,fontSize:15,background:"rgba(61,158,110,0.1)",border:"1px solid rgba(61,158,110,0.3)",color:"#3d9e6e"}}>✓ 答對了</button>
+            </div>
           </div>
-          <div style={{fontSize:"12px",color:"#555",textAlign:"center",marginBottom:"10px"}}>你答對了嗎？</div>
-          <div style={{display:"flex",gap:"10px"}}>
-            <button onClick={()=>mark(false)} style={{flex:1,padding:"14px",borderRadius:"12px",fontWeight:700,fontSize:"15px",background:"rgba(217,95,59,0.1)",border:"1px solid rgba(217,95,59,0.3)",color:"#d95f3b",cursor:"pointer"}}>✗ 答錯了</button>
-            <button onClick={()=>mark(true)}  style={{flex:1,padding:"14px",borderRadius:"12px",fontWeight:700,fontSize:"15px",background:"rgba(61,158,110,0.1)",border:"1px solid rgba(61,158,110,0.3)",color:"#3d9e6e",cursor:"pointer"}}>✓ 答對了</button>
-          </div>
-        </div>
-      )}
+      }
     </div>
   );
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  RESULT SCREEN
-// ════════════════════════════════════════════════════════════════════
 function ResultScreen({ session, setSession, setScreen, setLb }) {
-  const { results } = session;
-  const score = results.filter(r=>r.correct).length;
-  const pct   = results.length>0?score/results.length:0;
-  const wrong = results.filter(r=>!r.correct);
+  const {results}=session;
+  const score=results.filter(r=>r.correct).length,pct=results.length>0?score/results.length:0;
   return (
     <div style={{animation:"fadein .4s ease"}}>
       <div style={{textAlign:"center",padding:"24px 0 20px"}}>
-        <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"9px",letterSpacing:"4px",color:"#4f82cc",marginBottom:"12px"}}>RESULT</div>
+        <div style={{fontFamily:"monospace",fontSize:9,letterSpacing:4,color:"#4f82cc",marginBottom:12}}>RESULT</div>
         <div style={{position:"relative",display:"inline-block"}}>
           <svg width="120" height="120" viewBox="0 0 120 120">
             <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8"/>
             <circle cx="60" cy="60" r="52" fill="none" stroke={pct>=0.8?"#3d9e6e":pct>=0.6?"#c8922a":"#d95f3b"} strokeWidth="8"
-              strokeDasharray={`${pct*2*Math.PI*52} ${2*Math.PI*52}`} strokeDashoffset={2*Math.PI*52*0.25} strokeLinecap="round"/>
+              strokeDasharray={(pct*2*Math.PI*52)+" "+(2*Math.PI*52)} strokeDashoffset={2*Math.PI*52*0.25} strokeLinecap="round"/>
           </svg>
           <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"28px",fontWeight:700,lineHeight:1}}>{score}</div>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"11px",color:"#444"}}>/{results.length}</div>
+            <div style={{fontFamily:"monospace",fontSize:28,fontWeight:700,lineHeight:1}}>{score}</div>
+            <div style={{fontFamily:"monospace",fontSize:11,color:"#444"}}>/{results.length}</div>
           </div>
         </div>
-        <div style={{fontSize:"14px",color:"#666",marginTop:"10px"}}>
-          {score===results.length?"🎉 全對！太強了":pct>=0.8?"優秀，繼續保持":pct>=0.6?"不錯，再加把勁":"繼續努力！"}
-        </div>
+        <div style={{fontSize:14,color:"#666",marginTop:10}}>{score===results.length?"🎉 全對！太強了":pct>=0.8?"優秀，繼續保持":pct>=0.6?"不錯，再加把勁":"繼續努力！"}</div>
       </div>
-      <div style={{marginBottom:"20px"}}>
+      <div style={{marginBottom:20}}>
         {SUBJECTS.filter(s=>results.some(r=>r.sid===s.id)).map(sub=>{
           const sr=results.filter(r=>r.sid===sub.id),ss=sr.filter(r=>r.correct).length;
-          return (
-            <div key={sub.id} style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"9px"}}>
-              <div style={{width:"52px",fontSize:"12px",fontWeight:700,color:sub.color,flexShrink:0,textAlign:"right"}}>{sub.short}</div>
-              <div style={{flex:1,height:"6px",background:"rgba(255,255,255,0.05)",borderRadius:"3px",overflow:"hidden"}}>
-                <div style={{height:"100%",background:sub.color,width:`${(ss/sr.length)*100}%`,borderRadius:"3px",transition:"width .6s"}}/>
-              </div>
-              <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"11px",color:"#555",width:"32px"}}>{ss}/{sr.length}</div>
-            </div>
-          );
+          return <div key={sub.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:9}}>
+            <div style={{width:52,fontSize:12,fontWeight:700,color:sub.color,flexShrink:0,textAlign:"right"}}>{sub.short}</div>
+            <div style={{flex:1,height:6,background:"rgba(255,255,255,0.05)",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",background:sub.color,width:(ss/sr.length*100)+"%",borderRadius:3,transition:"width .6s"}}/></div>
+            <div style={{fontFamily:"monospace",fontSize:11,color:"#555",width:32}}>{ss}/{sr.length}</div>
+          </div>;
         })}
       </div>
-      {wrong.length>0&&(
-        <div style={{marginBottom:"24px"}}>
-          <div style={{fontSize:"12px",color:"#555",marginBottom:"10px"}}><span style={{color:"#d95f3b",fontWeight:700}}>{wrong.length}</span> 題答錯</div>
-          {wrong.map((r,i)=>{
-            const s=getSub(r.sid),u=getUnit(r.sid,r.uid);
-            return (
-              <div key={i} style={{borderRadius:"10px",background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",overflow:"hidden",marginBottom:"8px"}}>
-                <div style={{padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,0.04)",display:"flex",alignItems:"center",gap:"6px"}}>
-                  <span style={{fontSize:"11px",fontWeight:700,color:s.color}}>{s.short}</span>
-                  <span style={{fontSize:"11px",color:"#444"}}>·</span>
-                  <span style={{fontSize:"11px",color:"#555"}}>{u?.name}</span>
-                  {r.source&&<span style={{fontSize:"10px",color:"#404050",marginLeft:"auto"}}>📌 {r.source}</span>}
+      {results.filter(r=>!r.correct).length>0&&(
+        <div style={{marginBottom:24}}>
+          <div style={{fontSize:12,color:"#555",marginBottom:10}}><span style={{color:"#d95f3b",fontWeight:700}}>{results.filter(r=>!r.correct).length}</span> 題答錯</div>
+          {results.filter(r=>!r.correct).map((r,i)=>{
+            const s=getSub(r.sid),u=getUnit(r.sid,r.uid),src=fmtSrc(r.source_year,r.source_type);
+            return <div key={i} style={{borderRadius:10,background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",overflow:"hidden",marginBottom:8}}>
+              <div style={{padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,0.04)",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{fontSize:11,fontWeight:700,color:s.color}}>{s.short}</span>
+                <span style={{fontSize:11,color:"#444"}}>·</span>
+                <span style={{fontSize:11,color:"#555"}}>{u?.name}</span>
+                {src&&<span style={{fontSize:10,color:"#404050",marginLeft:"auto"}}>📌 {src}</span>}
+              </div>
+              <div style={{display:"flex",minHeight:80}}>
+                <div style={{flex:1,cursor:"pointer",borderRight:"1px solid rgba(255,255,255,0.04)"}} onClick={()=>r.q_url&&setLb({src:r.q_url,title:"題目"})}>
+                  {r.q_url?<img src={r.q_url} style={{width:"100%",maxHeight:120,objectFit:"contain",display:"block",padding:6}} alt="q"/>:<div style={{height:80,display:"flex",alignItems:"center",justifyContent:"center",color:"#2a2a3a",fontSize:11}}>無圖</div>}
                 </div>
-                <div style={{display:"flex",minHeight:"80px"}}>
-                  <div style={{flex:1,cursor:"pointer",borderRight:"1px solid rgba(255,255,255,0.04)"}} onClick={()=>r.qImg&&setLb({src:r.qImg,title:"題目"})}>
-                    {r.qImg?<img src={r.qImg} style={{width:"100%",maxHeight:"120px",objectFit:"contain",display:"block",padding:"6px"}} alt="q"/>:<div style={{height:"80px",display:"flex",alignItems:"center",justifyContent:"center",color:"#2a2a3a",fontSize:"11px"}}>無圖</div>}
-                  </div>
-                  <div style={{flex:1,cursor:"pointer",background:"rgba(61,158,110,0.04)"}} onClick={()=>r.aImg&&setLb({src:r.aImg,title:"答案"})}>
-                    {r.aImg?<img src={r.aImg} style={{width:"100%",maxHeight:"120px",objectFit:"contain",display:"block",padding:"6px"}} alt="a"/>:<div style={{height:"80px",display:"flex",alignItems:"center",justifyContent:"center",color:"#2a4a3a",fontSize:"11px"}}>無答案</div>}
-                  </div>
+                <div style={{flex:1,cursor:"pointer",background:"rgba(61,158,110,0.04)"}} onClick={()=>r.a_url&&setLb({src:r.a_url,title:"答案"})}>
+                  {r.a_url?<img src={r.a_url} style={{width:"100%",maxHeight:120,objectFit:"contain",display:"block",padding:6}} alt="a"/>:<div style={{height:80,display:"flex",alignItems:"center",justifyContent:"center",color:"#2a4a3a",fontSize:11}}>無答案</div>}
                 </div>
               </div>
-            );
+            </div>;
           })}
         </div>
       )}
-      <div style={{display:"flex",gap:"9px"}}>
-        <button onClick={()=>{setSession(s=>({...s,qIdx:0,showAns:false,results:[]}));setScreen(SCREENS.QUIZ);}}
-          style={{flex:1,padding:"13px",borderRadius:"11px",fontWeight:700,fontSize:"14px",background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",color:"white",cursor:"pointer"}}>再來一次</button>
-        <button onClick={()=>setScreen(SCREENS.HOME)}
-          style={{flex:1,padding:"13px",borderRadius:"11px",fontSize:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",color:"#666",cursor:"pointer"}}>重新設定</button>
+      <div style={{display:"flex",gap:9}}>
+        <button onClick={()=>{setSession(s=>({...s,qIdx:0,showAns:false,results:[]}));setScreen(SCREENS.QUIZ);}} style={{flex:1,padding:13,borderRadius:11,fontWeight:700,fontSize:14,background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",color:"white"}}>再來一次</button>
+        <button onClick={()=>setScreen(SCREENS.HOME)} style={{flex:1,padding:13,borderRadius:11,fontSize:14,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",color:"#666"}}>重新設定</button>
       </div>
     </div>
   );
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  PAPER SCREEN
-// ════════════════════════════════════════════════════════════════════
 function PaperScreen({ session, setScreen, setLb }) {
-  const [view, setView] = useState("q");
-  const { questions, byUnit } = session;
-  const groups = (() => {
-    if (!byUnit) return [{label:null,color:null,qs:questions.map((q,i)=>({...q,num:i+1}))}];
+  const [view,setView]=useState("q");
+  const {questions,byUnit}=session;
+  const groups=(()=>{
+    if(!byUnit) return [{label:null,color:null,qs:questions.map((q,i)=>({...q,num:i+1}))}];
     const g=[]; let num=1;
     SUBJECTS.forEach(sub=>sub.units.forEach(unit=>{
       const qs=questions.filter(q=>q.sid===sub.id&&q.uid===unit.id);
-      if(qs.length) g.push({label:`${sub.name} ／ ${unit.name}`,color:sub.color,qs:qs.map(q=>({...q,num:num++}))});
+      if(qs.length) g.push({label:sub.name+" ／ "+unit.name,color:sub.color,qs:qs.map(q=>({...q,num:num++}))});
     }));
     return g;
   })();
   return (
     <div>
-      <div className="noprint" style={{display:"flex",alignItems:"center",gap:"7px",marginBottom:"14px"}}>
-        <button onClick={()=>setScreen(SCREENS.HOME)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"7px",color:"#555",padding:"7px 13px",fontSize:"12px",cursor:"pointer",whiteSpace:"nowrap"}}>← 返回</button>
-        <div style={{display:"flex",gap:"5px",flex:1}}>
+      <div className="noprint" style={{display:"flex",alignItems:"center",gap:7,marginBottom:14}}>
+        <button onClick={()=>setScreen(SCREENS.HOME)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,color:"#555",padding:"7px 13px",fontSize:12,whiteSpace:"nowrap"}}>← 返回</button>
+        <div style={{display:"flex",gap:5,flex:1}}>
           {[{v:"q",l:"📋 題目卷"},{v:"a",l:"✅ 答案卷"}].map(({v,l})=>(
-            <button key={v} onClick={()=>setView(v)} style={{flex:1,padding:"7px",borderRadius:"7px",fontSize:"12px",fontWeight:view===v?700:400,background:view===v?"rgba(79,130,204,0.12)":"rgba(255,255,255,0.02)",border:`1px solid ${view===v?"rgba(79,130,204,0.3)":"rgba(255,255,255,0.07)"}`,color:view===v?"#4f82cc":"#555",cursor:"pointer"}}>{l}</button>
+            <button key={v} onClick={()=>setView(v)} style={{flex:1,padding:7,borderRadius:7,fontSize:12,fontWeight:view===v?700:400,background:view===v?"rgba(79,130,204,0.12)":"rgba(255,255,255,0.02)",border:"1px solid "+(view===v?"rgba(79,130,204,0.3)":"rgba(255,255,255,0.07)"),color:view===v?"#4f82cc":"#555"}}>{l}</button>
           ))}
         </div>
-        <button onClick={()=>window.print()} style={{background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",borderRadius:"7px",color:"white",padding:"7px 14px",fontSize:"12px",cursor:"pointer",fontWeight:700,whiteSpace:"nowrap"}}>🖨 列印</button>
+        <button onClick={()=>window.print()} style={{background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",borderRadius:7,color:"white",padding:"7px 14px",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>🖨 列印</button>
       </div>
-      <div className="paper-sheet" style={{background:"rgba(255,255,255,0.015)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:"12px",padding:"20px 18px"}}>
-        <div style={{borderBottom:"1px solid rgba(255,255,255,0.07)",paddingBottom:"12px",marginBottom:"18px"}}>
-          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"9px",letterSpacing:"4px",color:"#4f82cc",marginBottom:"4px"}}>{view==="q"?"EXAMINATION PAPER":"ANSWER KEY"}</div>
-          <div style={{fontSize:"18px",fontWeight:700}}>土木工程計算題{view==="q"?"考卷":"標準答案"}</div>
-          <div style={{display:"flex",gap:"16px",marginTop:"8px",fontSize:"11px",color:"#555",flexWrap:"wrap"}}>
+      <div className="paper-sheet" style={{background:"rgba(255,255,255,0.015)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:"20px 18px"}}>
+        <div style={{borderBottom:"1px solid rgba(255,255,255,0.07)",paddingBottom:12,marginBottom:18}}>
+          <div style={{fontFamily:"monospace",fontSize:9,letterSpacing:4,color:"#4f82cc",marginBottom:4}}>{view==="q"?"EXAMINATION PAPER":"ANSWER KEY"}</div>
+          <div style={{fontSize:18,fontWeight:700}}>土木工程計算題{view==="q"?"考卷":"標準答案"}</div>
+          <div style={{display:"flex",gap:16,marginTop:8,fontSize:11,color:"#555",flexWrap:"wrap"}}>
             <span>共 {questions.length} 題</span><span>{byUnit?"依單元分組":"隨機混合"}</span>
             {view==="q"&&<><span>姓名：＿＿＿＿＿</span><span>分數：＿＿＿</span></>}
           </div>
         </div>
         {groups.map((g,gi)=>(
-          <div key={gi} style={{marginBottom:"18px"}}>
-            {g.label&&<div style={{fontSize:"11px",fontWeight:700,color:g.color,borderLeft:`3px solid ${g.color}`,paddingLeft:"9px",marginBottom:"12px"}}>{g.label}</div>}
+          <div key={gi} style={{marginBottom:18}}>
+            {g.label&&<div style={{fontSize:11,fontWeight:700,color:g.color,borderLeft:"3px solid "+g.color,paddingLeft:9,marginBottom:12}}>{g.label}</div>}
             {g.qs.map((q,qi)=>(
-              <div key={qi} style={{marginBottom:view==="q"?"20px":"14px",padding:"11px 12px",borderRadius:"9px",background:"rgba(255,255,255,0.01)",border:"1px solid rgba(255,255,255,0.04)"}}>
-                <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"12px",fontWeight:700,color:"#4f82cc"}}>{q.num}.</span>
-                  {q.source&&<span style={{fontSize:"10px",color:"#505060"}}>📌 {q.source}</span>}
-                  {(()=>{ const u=getUnit(q.sid,q.uid); return u&&<span style={{fontSize:"9px",color:IMP.colors[u.imp],marginLeft:"auto"}}>{IMP.stars[u.imp]}</span>; })()}
+              <div key={qi} style={{marginBottom:view==="q"?20:14,padding:"11px 12px",borderRadius:9,background:"rgba(255,255,255,0.01)",border:"1px solid rgba(255,255,255,0.04)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:"#4f82cc"}}>{q.num}.</span>
+                  {(q.source_year||q.source_type)&&<span style={{fontSize:10,color:"#505060"}}>📌 {fmtSrc(q.source_year,q.source_type)}</span>}
+                  {(()=>{const u=getUnit(q.sid,q.uid);return u&&<span style={{fontSize:9,color:IMP.colors[u.imp],marginLeft:"auto"}}>{IMP.stars[u.imp]}</span>;})()}
                 </div>
-                {q.qImg&&<img src={q.qImg} onClick={()=>setLb({src:q.qImg,title:`#${q.num} 題目`})} style={{width:"100%",maxHeight:"240px",objectFit:"contain",borderRadius:"7px",display:"block",cursor:"pointer",marginBottom:"6px"}} alt="q"/>}
-                {view==="q"&&<div style={{marginTop:"6px"}}><div style={{height:"50px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}/><div style={{height:"1px",borderBottom:"1px solid rgba(255,255,255,0.04)",marginTop:"22px"}}/></div>}
+                {q.q_url&&<img src={q.q_url} onClick={()=>setLb({src:q.q_url,title:"#"+q.num+" 題目"})} style={{width:"100%",maxHeight:240,objectFit:"contain",borderRadius:7,display:"block",cursor:"pointer",marginBottom:6}} alt="q"/>}
+                {view==="q"&&<div style={{marginTop:6}}><div style={{height:50,borderBottom:"1px solid rgba(255,255,255,0.04)"}}/><div style={{height:1,borderBottom:"1px solid rgba(255,255,255,0.04)",marginTop:22}}/></div>}
                 {view==="a"&&(
-                  <div className="ans-box" style={{borderRadius:"8px",overflow:"hidden",border:"1px solid rgba(61,158,110,0.2)",background:"rgba(61,158,110,0.05)"}}>
-                    {q.aImg?<img src={q.aImg} onClick={()=>setLb({src:q.aImg,title:`#${q.num} 答案`})} style={{width:"100%",maxHeight:"240px",objectFit:"contain",display:"block",cursor:"pointer",padding:"6px"}} alt="a"/>
-                           :<div style={{padding:"14px",textAlign:"center",fontSize:"12px",color:"#2a4a3a"}}>（未上傳答案圖片）</div>}
+                  <div style={{borderRadius:8,overflow:"hidden",border:"1px solid rgba(61,158,110,0.2)",background:"rgba(61,158,110,0.05)"}}>
+                    {q.a_url?<img src={q.a_url} onClick={()=>setLb({src:q.a_url,title:"#"+q.num+" 答案"})} style={{width:"100%",maxHeight:240,objectFit:"contain",display:"block",cursor:"pointer",padding:6}} alt="a"/>
+                            :<div style={{padding:14,textAlign:"center",fontSize:12,color:"#2a4a3a"}}>（未上傳答案圖片）</div>}
                   </div>
                 )}
               </div>
@@ -528,171 +557,342 @@ function PaperScreen({ session, setScreen, setLb }) {
           </div>
         ))}
       </div>
-      <div className="noprint" style={{marginTop:"10px",display:"flex",gap:"8px"}}>
-        <button onClick={()=>setScreen(SCREENS.HOME)} style={{flex:1,padding:"11px",borderRadius:"9px",fontSize:"13px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",color:"#666",cursor:"pointer"}}>🔀 重新抽題</button>
-        <button onClick={()=>window.print()} style={{flex:1,padding:"11px",borderRadius:"9px",fontSize:"13px",fontWeight:700,background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",color:"white",cursor:"pointer"}}>🖨 列印 / PDF</button>
+      <div className="noprint" style={{marginTop:10,display:"flex",gap:8}}>
+        <button onClick={()=>setScreen(SCREENS.HOME)} style={{flex:1,padding:11,borderRadius:9,fontSize:13,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",color:"#666"}}>🔀 重新抽題</button>
+        <button onClick={()=>window.print()} style={{flex:1,padding:11,borderRadius:9,fontSize:13,fontWeight:700,background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",color:"white"}}>🖨 列印</button>
       </div>
     </div>
   );
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  BANK DRAWER
-// ════════════════════════════════════════════════════════════════════
-function BankDrawer({ bank, persist, syncState, onClose, setLb }) {
-  const [sid,   setSid]   = useState(SUBJECTS[0].id);
-  const [uid,   setUid]   = useState(SUBJECTS[0].units[0].id);
-  const [editId,setEditId]= useState(null);
-  const qRef    = useRef();
-  const bankRef = useRef(bank);
-  useEffect(()=>{ bankRef.current=bank; },[bank]);
+function BankPage({ bank, refreshBank, syncState, onClose, setLb }) {
+  const [tab,     setTab]     = useState("overview");
+  const [sid,     setSid]     = useState(SUBJECTS[0].id);
+  const [unitId,  setUnitId]  = useState(SUBJECTS[0].units[0].id);
+  const [editId,  setEditId]  = useState(null);
+  const [uploading,setUploading]=useState([]);
+  const [opState, setOpState] = useState("ok");
+  const qRef=useRef(), bankRef=useRef(bank);
+  useEffect(()=>{bankRef.current=bank;},[bank]);
 
-  const sub   = getSub(sid);
-  const unit  = getUnit(sid,uid);
-  const items = bank.filter(q=>q.sid===sid&&q.uid===uid);
+  const sub=getSub(sid), unit=getUnit(sid,unitId), items=(bank||[]).filter(q=>q.sid===sid&&q.uid===unitId), total=(bank||[]).length;
+  const sc={loading:"#555",saving:"#c8922a",ok:"#3d9e6e",error:"#d95f3b"};
+  const cur=opState!=="ok"?opState:syncState;
 
-  const addQImgs = async (files) => {
-    const arr=Array.from(files).filter(f=>f.type.startsWith("image/"));
-    const newItems=await Promise.all(arr.map(async f=>({id:genId(),sid,uid,qImg:await toBase64(f),aImg:"",source:""})));
-    persist([...bankRef.current,...newItems]);
+  const addQImgs=async(files)=>{
+    const arr=Array.from(files).filter(f=>f.type.startsWith("image/")); if(!arr.length) return;
+    const ids=arr.map(f=>({id:genId(),name:f.name,step:"reading"}));
+    setUploading(p=>[...p,...ids]);
+    for(let i=0;i<arr.length;i++){
+      const f=arr[i],ue=ids[i];
+      try{
+        setUploading(p=>p.map(u=>u.id===ue.id?{...u,step:"uploading"}:u));
+        const b64=await toBase64(f);
+        const fname=Date.now()+"_"+genId()+"."+f.name.split(".").pop();
+        const qUrl=await uploadImage(b64,f.type,fname);
+        setUploading(p=>p.map(u=>u.id===ue.id?{...u,step:"ai"}:u));
+        let explanation="";
+        try{const resp=await fetch(AI_WORKER,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({imageUrl:qUrl,subName:sub?.name||"",unitName:unit?.name||""})});const d=await resp.json();explanation=d.explanation||"";}catch{}
+        setUploading(p=>p.map(u=>u.id===ue.id?{...u,step:"saving"}:u));
+        await insertQ({sid,uid:unitId,q_url:qUrl,a_url:"",source_year:"",source_type:"",explanation});
+        setUploading(p=>p.map(u=>u.id===ue.id?{...u,step:"done"}:u));
+      }catch{ setUploading(p=>p.map(u=>u.id===ue.id?{...u,step:"error"}:u)); }
+    }
+    setTimeout(()=>setUploading(p=>p.filter(u=>!ids.find(x=>x.id===u.id))),3000);
+    refreshBank();
   };
-  const setAImg = async (id,file) => {
-    if(!file||!file.type.startsWith("image/")) return;
-    const b64=await toBase64(file);
-    persist(bankRef.current.map(q=>q.id===id?{...q,aImg:b64}:q));
-  };
-  const patch = (id,f) => persist(bank.map(q=>q.id===id?{...q,...f}:q));
-  const del   = (id)   => persist(bank.filter(q=>q.id!==id));
 
-  const syncColors = { loading:"#555", saving:"#c8922a", ok:"#3d9e6e", error:"#d95f3b" };
+  const setAImg=async(id,file)=>{ if(!file||!file.type.startsWith("image/"))return; setOpState("saving"); try{const b64=await toBase64(file);const fn=Date.now()+"_a."+file.name.split(".").pop();const url=await uploadImage(b64,file.type,fn);await updateQ(id,{a_url:url});refreshBank();setOpState("ok");}catch{setOpState("error");}};
+  const patch=async(id,f)=>{ setOpState("saving"); try{const db={};if(f.source!==undefined){db.source_year=f.source?.year||"";db.source_type=f.source?.type||"";}if(f.explanation!==undefined)db.explanation=f.explanation;await updateQ(id,db);refreshBank();setOpState("ok");}catch{setOpState("error");}};
+  const del=async(id)=>{ setOpState("saving"); try{await deleteQ(id);refreshBank();setOpState("ok");}catch{setOpState("error");}};
+  const regenExp=async(item)=>{ if(!item.q_url)return; try{const resp=await fetch(AI_WORKER,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({imageUrl:item.q_url,subName:getSub(item.sid)?.name||"",unitName:getUnit(item.sid,item.uid)?.name||""})});const d=await resp.json();if(d.explanation){await updateQ(item.id,{explanation:d.explanation});refreshBank();}}catch{}};
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:100,display:"flex"}}>
-      <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,0.6)"}}/>
-      <div style={{width:"min(420px,100vw)",background:"#0f1016",borderLeft:"1px solid rgba(255,255,255,0.08)",display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden"}}>
-        {/* Header */}
-        <div style={{padding:"14px 16px 10px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-          <div>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"9px",letterSpacing:"3px",color:"#4f82cc",marginBottom:"2px"}}>BANK</div>
-            <div style={{fontSize:"15px",fontWeight:700,display:"flex",alignItems:"center",gap:"8px"}}>
-              題庫管理
-              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"11px",color:syncColors[syncState],fontWeight:400}}>
-                {syncState==="saving"?"⟳ 同步中…":syncState==="ok"?"● 已同步":syncState==="error"?"✕ 同步失敗":"⟳ 連線中"}
-              </span>
-            </div>
-          </div>
-          <button onClick={onClose} style={{background:"rgba(255,255,255,0.05)",border:"none",color:"#666",width:32,height:32,borderRadius:"50%",cursor:"pointer",fontSize:"16px"}}>✕</button>
-        </div>
-
-        {/* Subject pills */}
-        <div style={{padding:"10px 14px 6px",borderBottom:"1px solid rgba(255,255,255,0.05)",flexShrink:0}}>
-          <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"7px"}}>
-            {SUBJECTS.map(s=>{
-              const cnt=bank.filter(q=>q.sid===s.id).length;
-              return <button key={s.id} onClick={()=>{setSid(s.id);setUid(s.units[0].id);}} style={{padding:"3px 9px",borderRadius:"15px",fontSize:"11px",fontWeight:sid===s.id?700:400,background:sid===s.id?s.bg:"transparent",border:`1px solid ${sid===s.id?s.border:"rgba(255,255,255,0.07)"}`,color:sid===s.id?s.color:"#4a4a5a",cursor:"pointer",whiteSpace:"nowrap"}}>
-                {s.short}{cnt>0&&<span style={{opacity:.5,marginLeft:2}}>·{cnt}</span>}
-              </button>;
-            })}
-          </div>
-          <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
-            {sub.units.map(u=>{
-              const cnt=bank.filter(q=>q.sid===sid&&q.uid===u.id).length;
-              const act=uid===u.id;
-              return <button key={u.id} onClick={()=>setUid(u.id)} style={{padding:"2px 8px",borderRadius:"5px",fontSize:"10px",fontWeight:act?700:400,background:act?sub.bg:"transparent",border:`1px solid ${act?sub.border:"rgba(255,255,255,0.05)"}`,color:act?sub.color:"#3a3a4a",cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:"3px"}}>
-                <span style={{fontSize:"8px",color:IMP.colors[u.imp]}}>{IMP.stars[u.imp]}</span>{u.name}{cnt>0&&<span style={{color:act?sub.color:"#333",fontFamily:"'IBM Plex Mono',monospace"}}>{cnt}</span>}
-              </button>;
-            })}
+    <div style={{position:"fixed",inset:0,zIndex:100,background:"#0f1016",display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden"}}>
+      <div style={{padding:"14px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div>
+          <div style={{fontFamily:"monospace",fontSize:9,letterSpacing:3,color:"#4f82cc",marginBottom:2}}>BANK</div>
+          <div style={{fontSize:15,fontWeight:700,display:"flex",alignItems:"center",gap:8}}>
+            題庫管理 <span style={{fontFamily:"monospace",fontSize:10,color:sc[cur],fontWeight:400}}>{cur==="saving"?"⟳ 同步中":cur==="ok"?"● 已同步":cur==="error"?"✕ 失敗":"⟳ 連線中"}</span>
           </div>
         </div>
+        <button onClick={onClose} style={{background:"rgba(255,255,255,0.06)",border:"none",color:"#888",width:36,height:36,borderRadius:"50%",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+      </div>
+      <div style={{display:"flex",padding:"8px 20px 0",gap:6,borderBottom:"1px solid rgba(255,255,255,0.06)",flexShrink:0}}>
+        {[{v:"overview",l:"📊 總覽 ("+total+")"},{v:"edit",l:"✏️ 管理題目"}].map(({v,l})=>(
+          <button key={v} onClick={()=>setTab(v)} style={{padding:"6px 16px",borderRadius:"7px 7px 0 0",fontSize:12,fontWeight:tab===v?700:400,background:tab===v?"rgba(79,130,204,0.12)":"transparent",border:"1px solid "+(tab===v?"rgba(79,130,204,0.3)":"rgba(255,255,255,0.06)"),borderBottom:"none",color:tab===v?"#4f82cc":"#555"}}>{l}</button>
+        ))}
+      </div>
 
-        {/* Upload bar */}
-        <div style={{padding:"8px 14px",borderBottom:"1px solid rgba(255,255,255,0.04)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-          <div style={{fontSize:"11px",color:sub.color,fontWeight:600}}>{sub.name} · {unit?.name} <span style={{color:"#3a3a4a",fontWeight:400}}>({items.length}題)</span></div>
-          <button onClick={()=>qRef.current?.click()} style={{padding:"5px 12px",borderRadius:"6px",fontSize:"11px",fontWeight:600,background:`linear-gradient(135deg,${sub.color},${sub.color}cc)`,border:"none",color:"#fff",cursor:"pointer",whiteSpace:"nowrap"}}>＋ 上傳</button>
+      {tab==="overview"&&(
+        <div style={{flex:1,overflowY:"auto",padding:20}}>
+          {SUBJECTS.map(s=>{
+            const cnt=(bank||[]).filter(q=>q.sid===s.id).length; if(!cnt) return null;
+            return <div key={s.id} style={{marginBottom:20}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <div style={{fontSize:14,fontWeight:700,color:s.color}}>{s.name}</div>
+                <div style={{fontFamily:"monospace",fontSize:11,color:"#444"}}>{cnt} 題</div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                {s.units.map(u=>{
+                  const c=(bank||[]).filter(q=>q.sid===s.id&&q.uid===u.id).length; if(!c) return null;
+                  return <div key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",borderRadius:8,background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",cursor:"pointer"}}
+                    onClick={()=>{setSid(s.id);setUnitId(u.id);setTab("edit");}}>
+                    <span style={{fontSize:10,color:IMP.colors[u.imp]}}>{IMP.stars[u.imp]}</span>
+                    <span style={{fontSize:13,color:"#aaa",flex:1}}>{u.name}</span>
+                    <span style={{fontFamily:"monospace",fontSize:12,color:s.color,fontWeight:600}}>{c}</span>
+                    <span style={{fontSize:11,color:"#333"}}>→</span>
+                  </div>;
+                })}
+              </div>
+            </div>;
+          })}
+          {total===0&&<div style={{textAlign:"center",padding:48,color:"#333",fontSize:13}}>題庫是空的</div>}
+        </div>
+      )}
+
+      {tab==="edit"&&(<>
+        <div style={{padding:"10px 16px 6px",borderBottom:"1px solid rgba(255,255,255,0.05)",flexShrink:0}}>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:7}}>
+            {SUBJECTS.map(s=>{const c=(bank||[]).filter(q=>q.sid===s.id).length;return(
+              <button key={s.id} onClick={()=>{setSid(s.id);setUnitId(s.units[0].id);}} style={{padding:"3px 10px",borderRadius:15,fontSize:11,fontWeight:sid===s.id?700:400,background:sid===s.id?s.bg:"transparent",border:"1px solid "+(sid===s.id?s.border:"rgba(255,255,255,0.07)"),color:sid===s.id?s.color:"#4a4a5a",whiteSpace:"nowrap"}}>
+                {s.short}{c>0&&<span style={{opacity:.5,marginLeft:2}}>·{c}</span>}
+              </button>
+            );})}
+          </div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {sub.units.map(u=>{const c=(bank||[]).filter(q=>q.sid===sid&&q.uid===u.id).length,act=unitId===u.id;return(
+              <button key={u.id} onClick={()=>setUnitId(u.id)} style={{padding:"2px 9px",borderRadius:5,fontSize:10,fontWeight:act?700:400,background:act?sub.bg:"transparent",border:"1px solid "+(act?sub.border:"rgba(255,255,255,0.05)"),color:act?sub.color:"#3a3a4a",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:3}}>
+                <span style={{fontSize:8,color:IMP.colors[u.imp]}}>{IMP.stars[u.imp]}</span>{u.name}{c>0&&<span style={{color:act?sub.color:"#333",fontFamily:"monospace"}}>{c}</span>}
+              </button>
+            );})}
+          </div>
+        </div>
+        <div style={{padding:"8px 16px",borderBottom:"1px solid rgba(255,255,255,0.04)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+          <div style={{fontSize:11,color:sub.color,fontWeight:600}}>{sub.name} · {unit?.name} <span style={{color:"#3a3a4a",fontWeight:400}}>({items.length}題)</span></div>
+          <button onClick={()=>qRef.current?.click()} style={{padding:"6px 14px",borderRadius:7,fontSize:11,fontWeight:600,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"cc)",border:"none",color:"#fff",whiteSpace:"nowrap"}}>＋ 上傳圖片</button>
           <input ref={qRef} type="file" multiple accept="image/*" style={{display:"none"}} onChange={e=>{addQImgs(e.target.files);e.target.value="";}}/>
         </div>
-
-        {/* Items */}
-        <div style={{flex:1,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:"8px"}}>
-          {items.length===0&&(
-            <div onClick={()=>qRef.current?.click()} style={{border:"1px dashed rgba(255,255,255,0.07)",borderRadius:"9px",padding:"32px 16px",textAlign:"center",cursor:"pointer",color:"#2a2a3a",fontSize:"12px"}}>
-              <div style={{fontSize:"24px",marginBottom:"6px"}}>🖼</div>點擊上傳題目圖片
+        <div style={{flex:1,overflowY:"auto",padding:"10px 16px",display:"flex",flexDirection:"column",gap:8}}>
+          {uploading.length>0&&(
+            <div style={{borderRadius:9,background:"rgba(114,85,184,0.07)",border:"1px solid rgba(114,85,184,0.2)",padding:"10px 14px",display:"flex",flexDirection:"column",gap:7}}>
+              <div style={{fontSize:10,color:"#9b6bbf",fontFamily:"monospace",letterSpacing:1}}>上傳中</div>
+              {uploading.map(u=>(
+                <div key={u.id} style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:11,color:u.step==="done"?"#3d9e6e":u.step==="error"?"#d95f3b":"#9b6bbf",flexShrink:0}}>{u.step==="done"?"✓":u.step==="error"?"✕":u.step==="ai"?"🤖":u.step==="uploading"?"☁️":"📷"}</span>
+                  <span style={{flex:1,fontSize:11,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</span>
+                  <span style={{fontSize:10,color:u.step==="done"?"#3d9e6e":u.step==="error"?"#d95f3b":"#7255b8",flexShrink:0,fontFamily:"monospace"}}>{u.step==="reading"?"讀取…":u.step==="uploading"?"上傳…":u.step==="ai"?"AI題解…":u.step==="saving"?"儲存…":u.step==="done"?"完成":"失敗"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {items.length===0&&uploading.length===0&&(
+            <div onClick={()=>qRef.current?.click()} style={{border:"1px dashed rgba(255,255,255,0.07)",borderRadius:9,padding:40,textAlign:"center",cursor:"pointer",color:"#2a2a3a",fontSize:13}}>
+              <div style={{fontSize:28,marginBottom:8}}>🖼</div>點擊上傳題目圖片
             </div>
           )}
           {items.map((item,idx)=>(
-            <BankItem key={item.id} item={item} idx={idx} sub={sub}
+            <BankCard key={item.id} item={item} idx={idx} sub={sub}
               editing={editId===item.id} setEditing={v=>setEditId(v?item.id:null)}
               onDel={()=>del(item.id)} onPatch={f=>patch(item.id,f)}
-              onSetAImg={f=>setAImg(item.id,f)} onLb={setLb}
+              onSetAImg={f=>setAImg(item.id,f)} onLb={setLb} onRegen={()=>regenExp(item)}
             />
           ))}
-          {items.length>0&&<div onClick={()=>qRef.current?.click()} style={{border:"1px dashed rgba(255,255,255,0.05)",borderRadius:"7px",padding:"10px",textAlign:"center",cursor:"pointer",color:"#252535",fontSize:"11px"}}>＋ 繼續上傳</div>}
+          {items.length>0&&<div onClick={()=>qRef.current?.click()} style={{border:"1px dashed rgba(255,255,255,0.05)",borderRadius:7,padding:12,textAlign:"center",cursor:"pointer",color:"#252535",fontSize:11}}>＋ 繼續上傳</div>}
         </div>
-      </div>
+      </>)}
     </div>
   );
 }
 
-function BankItem({ item, idx, sub, editing, setEditing, onDel, onPatch, onSetAImg, onLb }) {
-  const [src,setSrc]=useState(item.source||"");
+function BankCard({ item, idx, sub, editing, setEditing, onDel, onPatch, onSetAImg, onLb, onRegen }) {
+  const [year,setYear]=useState(item.source_year||"");
+  const [type,setType]=useState(item.source_type||"");
+  const [confirmDel,setConfirmDel]=useState(false);
+  const [expanded,setExpanded]=useState(false);
+  const [regenState,setRegenState]=useState("idle");
   const aRef=useRef();
-  useEffect(()=>setSrc(item.source||""),[item.id]);
-  const save=()=>{ onPatch({source:src}); setEditing(false); };
+  useEffect(()=>{setYear(item.source_year||"");setType(item.source_type||"");},[item.id]);
+  const save=()=>{onPatch({source:{year:year.trim(),type}});setEditing(false);};
+  const src=fmtSrc(item.source_year,item.source_type);
+  const doRegen=async()=>{setRegenState("loading");try{await onRegen();setRegenState("done");setTimeout(()=>setRegenState("idle"),2000);}catch{setRegenState("error");setTimeout(()=>setRegenState("idle"),2500);}};
+
   return (
-    <div style={{borderRadius:"9px",border:`1px solid ${editing?sub.border:"rgba(255,255,255,0.06)"}`,background:editing?sub.bg:"rgba(255,255,255,0.02)",overflow:"hidden"}}>
-      <div style={{display:"flex",alignItems:"center",padding:"7px 9px",gap:"6px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-        <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:"10px",color:sub.color,fontWeight:700}}>#{idx+1}</span>
-        {!editing
-          ? <>{item.source&&<span style={{fontSize:"10px",color:"#666",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {item.source}</span>}
-              <div style={{flex:1}}/>
-              <button onClick={()=>setEditing(true)} style={{padding:"2px 8px",borderRadius:"4px",fontSize:"10px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",color:"#555",cursor:"pointer"}}>出處</button>
-            </>
-          : <><input value={src} onChange={e=>setSrc(e.target.value)} onKeyDown={e=>e.key==="Enter"&&save()} autoFocus
-                placeholder="出處（113年高考第3題）"
-                style={{flex:1,padding:"3px 7px",borderRadius:"4px",background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.12)",color:"#ddd",fontSize:"11px",outline:"none"}}/>
-              <button onClick={save} style={{padding:"2px 8px",borderRadius:"4px",fontSize:"10px",background:"rgba(61,158,110,0.14)",border:"1px solid rgba(61,158,110,0.25)",color:"#3d9e6e",cursor:"pointer",fontWeight:700}}>✓</button>
-            </>
-        }
-        <button onClick={onDel} style={{padding:"2px 6px",borderRadius:"4px",fontSize:"10px",background:"transparent",border:"1px solid rgba(255,255,255,0.05)",color:"#3a2525",cursor:"pointer",flexShrink:0}}>✕</button>
-      </div>
-      <div style={{display:"flex"}}>
-        <div style={{flex:1,cursor:"pointer",borderRight:"1px solid rgba(255,255,255,0.04)",minHeight:"64px",display:"flex",alignItems:"center",justifyContent:"center"}}
-          onClick={()=>item.qImg&&onLb({src:item.qImg,title:`#${idx+1} 題目`})}>
-          {item.qImg?<img src={item.qImg} style={{width:"100%",maxHeight:"90px",objectFit:"contain",display:"block",padding:"4px"}} alt="q"/>
-                    :<div style={{fontSize:"11px",color:"#2a2a3a",textAlign:"center",padding:"8px"}}>題目<br/>無圖</div>}
+    <div style={{borderRadius:9,border:"1px solid "+(editing?sub.border:"rgba(255,255,255,0.06)"),background:editing?sub.bg:"rgba(255,255,255,0.02)",overflow:"hidden"}}>
+      <div style={{padding:"7px 10px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:editing?8:0}}>
+          <span style={{fontFamily:"monospace",fontSize:10,color:sub.color,fontWeight:700}}>#{idx+1}</span>
+          {!editing&&<>
+            {src&&<span style={{fontSize:10,color:"#666",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {src}</span>}
+            <div style={{flex:1}}/>
+            <button onClick={()=>setEditing(true)} style={{padding:"2px 8px",borderRadius:4,fontSize:10,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",color:"#555"}}>出處</button>
+            {item.explanation&&<span style={{fontSize:9,color:"#7255b8",background:"rgba(114,85,184,0.1)",border:"1px solid rgba(114,85,184,0.2)",borderRadius:3,padding:"1px 5px"}}>🤖</span>}
+          </>}
+          {editing&&<div style={{flex:1,fontSize:11,color:sub.color,fontWeight:600}}>編輯出處</div>}
+          <button onClick={()=>setConfirmDel(true)} style={{padding:"2px 6px",borderRadius:4,fontSize:11,background:"transparent",border:"1px solid rgba(255,255,255,0.05)",color:"#3a2525",flexShrink:0}}>✕</button>
         </div>
-        <div style={{flex:1,cursor:"pointer",background:"rgba(61,158,110,0.03)",minHeight:"64px",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}
-          onClick={()=>item.aImg?onLb({src:item.aImg,title:`#${idx+1} 答案`}):aRef.current?.click()}>
-          {item.aImg?<img src={item.aImg} style={{width:"100%",maxHeight:"90px",objectFit:"contain",display:"block",padding:"4px"}} alt="a"/>
-                    :<div style={{fontSize:"11px",color:"#2a3e2e",textAlign:"center",padding:"8px"}}>＋<br/>答案</div>}
-          {item.aImg&&<button onClick={e=>{e.stopPropagation();aRef.current?.click();}} style={{position:"absolute",bottom:3,right:3,padding:"1px 5px",borderRadius:"3px",fontSize:"9px",background:"rgba(0,0,0,0.5)",border:"none",color:"#666",cursor:"pointer"}}>換</button>}
-          <input ref={aRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{onSetAImg(e.target.files?.[0]);e.target.value="";}}/>
+        {editing&&(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:11,color:"#666",flexShrink:0}}>年份</span>
+              <input value={year} onChange={e=>setYear(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="例：113"
+                style={{width:80,padding:"4px 8px",borderRadius:5,background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.12)",color:"#ddd",fontSize:12,outline:"none",textAlign:"center"}}/>
+              <span style={{fontSize:11,color:"#555"}}>年</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <span style={{fontSize:11,color:"#666"}}>類別</span>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:10,color:"#555",flexShrink:0}}>技師：</span>
+                {EXAM_TYPES.filter(e=>e.group==="技師").map(e=>{const sel=type===e.id;return(
+                  <button key={e.id} onClick={()=>setType(sel?"":e.id)} style={{padding:"3px 9px",borderRadius:20,fontSize:10,fontWeight:sel?700:400,background:sel?sub.bg:"rgba(255,255,255,0.03)",border:"1px solid "+(sel?sub.border:"rgba(255,255,255,0.08)"),color:sel?sub.color:"#555"}}>
+                    {sel?"✓ ":""}{e.label.replace("技師【","【")}
+                  </button>);
+                })}
+              </div>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:10,color:"#555",flexShrink:0}}>其他：</span>
+                {EXAM_TYPES.filter(e=>e.group!=="技師").map(e=>{const sel=type===e.id;return(
+                  <button key={e.id} onClick={()=>setType(sel?"":e.id)} style={{padding:"3px 9px",borderRadius:20,fontSize:10,fontWeight:sel?700:400,background:sel?sub.bg:"rgba(255,255,255,0.03)",border:"1px solid "+(sel?sub.border:"rgba(255,255,255,0.08)"),color:sel?sub.color:"#555"}}>
+                    {sel?"✓ ":""}{e.label}
+                  </button>);
+                })}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+              <button onClick={()=>setEditing(false)} style={{padding:"4px 12px",borderRadius:5,fontSize:11,background:"transparent",border:"1px solid rgba(255,255,255,0.08)",color:"#555"}}>取消</button>
+              <button onClick={save} style={{padding:"4px 12px",borderRadius:5,fontSize:11,background:"rgba(61,158,110,0.14)",border:"1px solid rgba(61,158,110,0.25)",color:"#3d9e6e",fontWeight:700}}>儲存</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {confirmDel&&<ConfirmDelModal onConfirm={()=>{setConfirmDel(false);onDel();}} onClose={()=>setConfirmDel(false)}/>}
+
+      <div style={{display:"flex",alignItems:"center",padding:"6px 10px",borderBottom:"1px solid rgba(255,255,255,0.04)",gap:8,cursor:"pointer"}} onClick={()=>setExpanded(v=>!v)}>
+        <div style={{flex:1,display:"flex",gap:8}}>
+          <span style={{fontSize:10,color:item.q_url?"#4f82cc":"#333"}}>🖼 {item.q_url?"題目":"無題目"}</span>
+          <span style={{fontSize:10,color:item.a_url?"#3d9e6e":"#333"}}>{item.a_url?"✓ 答案":"+ 無答案"}</span>
+          {item.explanation&&<span style={{fontSize:10,color:"#7255b8"}}>🤖 題解</span>}
+        </div>
+        <span style={{fontSize:10,color:"#444"}}>{expanded?"▲":"▼"}</span>
+      </div>
+
+      {expanded&&(
+        <div>
+          <div style={{display:"flex",gap:6,padding:"8px 10px",borderBottom:"1px solid rgba(255,255,255,0.04)",background:"rgba(255,255,255,0.02)"}}>
+            <button onClick={()=>item.q_url&&onLb({src:item.q_url,title:"#"+(idx+1)+" 題目"})} disabled={!item.q_url}
+              style={{flex:1,padding:"6px 4px",borderRadius:6,fontSize:11,background:"rgba(79,130,204,0.08)",border:"1px solid rgba(79,130,204,0.2)",color:item.q_url?"#4f82cc":"#333"}}>
+              🖼 {item.q_url?"查看題目":"無題目"}
+            </button>
+            <button onClick={()=>item.a_url?onLb({src:item.a_url,title:"#"+(idx+1)+" 答案"}):aRef.current?.click()}
+              style={{flex:1,padding:"6px 4px",borderRadius:6,fontSize:11,background:"rgba(61,158,110,0.08)",border:"1px solid rgba(61,158,110,0.2)",color:"#3d9e6e"}}>
+              {item.a_url?"✓ 查看答案":"＋ 上傳答案"}
+            </button>
+            {item.a_url&&<button onClick={()=>aRef.current?.click()} style={{padding:"6px 10px",borderRadius:6,fontSize:11,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",color:"#555"}}>換圖</button>}
+            <input ref={aRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{onSetAImg(e.target.files?.[0]);e.target.value="";}}/>
+          </div>
+          {item.q_url&&<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(255,255,255,0.04)",cursor:"pointer"}} onClick={()=>onLb({src:item.q_url,title:"#"+(idx+1)+" 題目"})}>
+            <div style={{fontSize:10,color:"#4f82cc",marginBottom:4,fontWeight:600}}>🖼 題目圖片</div>
+            <img src={item.q_url} style={{width:"100%",height:"auto",display:"block",borderRadius:6}} alt="q"/>
+          </div>}
+          {item.a_url&&<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(255,255,255,0.04)",cursor:"pointer",background:"rgba(61,158,110,0.03)"}} onClick={()=>onLb({src:item.a_url,title:"#"+(idx+1)+" 答案"})}>
+            <div style={{fontSize:10,color:"#3d9e6e",marginBottom:4,fontWeight:600}}>✓ 答案圖片</div>
+            <img src={item.a_url} style={{width:"100%",height:"auto",display:"block",borderRadius:6}} alt="a"/>
+          </div>}
+          <div style={{padding:"6px 10px"}}>
+            <button onClick={doRegen} disabled={regenState==="loading"||!item.q_url}
+              style={{width:"100%",padding:6,borderRadius:6,fontSize:10,fontWeight:600,background:regenState==="done"?"rgba(61,158,110,0.1)":regenState==="error"?"rgba(217,95,59,0.1)":"rgba(114,85,184,0.08)",border:"1px solid "+(regenState==="done"?"rgba(61,158,110,0.25)":regenState==="error"?"rgba(217,95,59,0.25)":"rgba(114,85,184,0.2)"),color:regenState==="done"?"#3d9e6e":regenState==="error"?"#d95f3b":"#7255b8",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+              {regenState==="loading"?<><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> 生成中…</>:regenState==="done"?"✓ 題解已更新":regenState==="error"?"✕ 失敗，請重試":item.explanation?"🤖 重新生成題解":"🤖 生成 AI 題解"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnsPwModal({ onSuccess, onClose }) {
+  const [pw,setPw]=useState(""); const [err,setErr]=useState(false); const ref=useRef();
+  useEffect(()=>{setTimeout(()=>ref.current?.focus(),100);},[]);
+  const submit=()=>{if(pw===ANS_PW){onSuccess();}else{setErr(true);setPw("");setTimeout(()=>setErr(false),1200);}};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#14141c",border:"1px solid rgba(61,158,110,0.3)",borderRadius:16,padding:"28px 24px",width:"100%",maxWidth:320,textAlign:"center"}}>
+        <div style={{fontSize:28,marginBottom:12}}>🔐</div>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>查看答案</div>
+        <div style={{fontSize:12,color:"#555",marginBottom:20}}>答案受版權保護，請輸入密碼</div>
+        <input ref={ref} type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="輸入密碼"
+          style={{width:"100%",padding:"11px 14px",borderRadius:9,background:err?"rgba(217,95,59,0.12)":"rgba(255,255,255,0.06)",border:"1px solid "+(err?"rgba(217,95,59,0.5)":"rgba(255,255,255,0.1)"),color:"#ddd",fontSize:15,outline:"none",textAlign:"center",letterSpacing:4,marginBottom:8,transition:"all .2s"}}/>
+        {err&&<div style={{fontSize:12,color:"#d95f3b",marginBottom:8}}>密碼錯誤</div>}
+        <div style={{display:"flex",gap:8,marginTop:4}}>
+          <button onClick={onClose} style={{flex:1,padding:10,borderRadius:8,background:"transparent",border:"1px solid rgba(255,255,255,0.08)",color:"#666",fontSize:13}}>取消</button>
+          <button onClick={submit} style={{flex:1,padding:10,borderRadius:8,background:"linear-gradient(135deg,#3d9e6e,#2a7a55)",border:"none",color:"white",fontSize:13,fontWeight:700}}>確認</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────
+function PwModal({ onSuccess, onClose }) {
+  const [pw,setPw]=useState(""); const [err,setErr]=useState(false); const ref=useRef();
+  useEffect(()=>{setTimeout(()=>ref.current?.focus(),100);},[]);
+  const submit=()=>{if(pw===BANK_PW){onSuccess();}else{setErr(true);setPw("");setTimeout(()=>setErr(false),1200);}};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#14141c",border:"1px solid rgba(255,255,255,0.1)",borderRadius:16,padding:"28px 24px",width:"100%",maxWidth:320,textAlign:"center"}}>
+        <div style={{fontSize:28,marginBottom:12}}>🔒</div>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>題庫管理</div>
+        <div style={{fontSize:12,color:"#555",marginBottom:20}}>請輸入密碼</div>
+        <input ref={ref} type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="輸入密碼"
+          style={{width:"100%",padding:"11px 14px",borderRadius:9,background:err?"rgba(217,95,59,0.12)":"rgba(255,255,255,0.06)",border:"1px solid "+(err?"rgba(217,95,59,0.5)":"rgba(255,255,255,0.1)"),color:"#ddd",fontSize:15,outline:"none",textAlign:"center",letterSpacing:4,marginBottom:8,transition:"all .2s"}}/>
+        {err&&<div style={{fontSize:12,color:"#d95f3b",marginBottom:8}}>密碼錯誤</div>}
+        <div style={{display:"flex",gap:8,marginTop:4}}>
+          <button onClick={onClose} style={{flex:1,padding:10,borderRadius:8,background:"transparent",border:"1px solid rgba(255,255,255,0.08)",color:"#666",fontSize:13}}>取消</button>
+          <button onClick={submit} style={{flex:1,padding:10,borderRadius:8,background:"linear-gradient(135deg,#4f82cc,#2f5fa0)",border:"none",color:"white",fontSize:13,fontWeight:700}}>確認</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDelModal({ onConfirm, onClose }) {
+  const [step,setStep]=useState(1);
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#14141c",border:"1px solid rgba(217,95,59,0.3)",borderRadius:16,padding:"28px 24px",width:"100%",maxWidth:300,textAlign:"center"}}>
+        <div style={{fontSize:28,marginBottom:12}}>{step===1?"🗑":"⚠️"}</div>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:8,color:"#d95f3b"}}>{step===1?"確定要刪除？":"再次確認刪除"}</div>
+        <div style={{fontSize:12,color:"#666",marginBottom:20,lineHeight:1.6}}>{step===1?"這道題目將從題庫中移除":"此操作無法復原，確定要永久刪除嗎？"}</div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={onClose} style={{flex:1,padding:10,borderRadius:8,background:"transparent",border:"1px solid rgba(255,255,255,0.08)",color:"#666",fontSize:13}}>取消</button>
+          <button onClick={()=>step===1?setStep(2):onConfirm()} style={{flex:1,padding:10,borderRadius:8,background:"rgba(217,95,59,0.15)",border:"1px solid rgba(217,95,59,0.4)",color:"#d95f3b",fontSize:13,fontWeight:700}}>{step===1?"刪除":"確定刪除"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Lightbox({ src, title, onClose }) {
   return (
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:400,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-      {title&&<div style={{color:"#555",fontSize:"11px",marginBottom:"10px",fontFamily:"'IBM Plex Mono',monospace"}}>{title}</div>}
-      <img src={src} style={{maxWidth:"100%",maxHeight:"88vh",borderRadius:"8px",objectFit:"contain"}} alt=""/>
-      <button onClick={onClose} style={{marginTop:"14px",background:"rgba(255,255,255,0.07)",border:"none",color:"#777",padding:"7px 22px",borderRadius:"8px",cursor:"pointer",fontSize:"13px"}}>關閉</button>
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:400,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20}}>
+      {title&&<div style={{color:"#555",fontSize:11,marginBottom:10,fontFamily:"monospace"}}>{title}</div>}
+      <img src={src} style={{maxWidth:"100%",maxHeight:"88vh",borderRadius:8,objectFit:"contain"}} alt=""/>
+      <button onClick={onClose} style={{marginTop:14,background:"rgba(255,255,255,0.07)",border:"none",color:"#777",padding:"7px 22px",borderRadius:8,fontSize:13}}>關閉</button>
     </div>
   );
 }
-function Pill({children,color,bg,border}){
-  return <span style={{padding:"3px 9px",borderRadius:"20px",fontSize:"11px",fontWeight:700,background:bg,border:`1px solid ${border}`,color,whiteSpace:"nowrap"}}>{children}</span>;
+
+function Pill({ children, color, bg, border }) {
+  return <span style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:bg,border:"1px solid "+border,color,whiteSpace:"nowrap"}}>{children}</span>;
 }
-function Toggle({val,set}){
+
+function Toggle({ val, set }) {
   return <div onClick={()=>set(!val)} style={{width:44,height:24,borderRadius:12,background:val?"#4f82cc":"rgba(255,255,255,0.08)",cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
     <div style={{position:"absolute",top:3,left:val?22:3,width:18,height:18,borderRadius:"50%",background:"white",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
   </div>;
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
 </body>
 </html>
