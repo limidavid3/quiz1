@@ -374,8 +374,13 @@ function QuizScreen({ session, setSession, setScreen, setLb }) {
   const prevIdx=useRef(qIdx);
   const q=questions[qIdx],sub=getSub(q?.sid),unit=getUnit(q?.sid,q?.uid);
   useEffect(()=>{if(prevIdx.current!==qIdx){setShowExp(false);prevIdx.current=qIdx;}},[qIdx]);
-  const reveal=()=>{ setAnsPwOpen(true); setSession(s=>({...s,showAns:true})); };
-  const onAnsUnlock=()=>{ setAnsPwOpen(false); };
+  const reveal=()=>setAnsPwOpen(true);
+  const onAnsUnlock=()=>{ setAnsPwOpen(false); setSession(s=>({...s,showAns:true})); };
+  const nextQ=()=>{
+    const nr=[...session.results,{...q,correct:null}];
+    if(qIdx+1>=questions.length){setSession(s=>({...s,results:nr}));setScreen(SCREENS.RESULT);}
+    else setSession(s=>({...s,results:nr,qIdx:qIdx+1,showAns:false}));
+  };
   const mark=correct=>{
     const nr=[...session.results,{...q,correct}];
     if(qIdx+1>=questions.length){setSession(s=>({...s,results:nr}));setScreen(SCREENS.RESULT);}
@@ -403,7 +408,12 @@ function QuizScreen({ session, setSession, setScreen, setLb }) {
                 :<div style={{padding:48,textAlign:"center",color:"#2a2a3a",fontSize:13}}>無題目圖片</div>}
       </div>
       {!showAns
-        ? <button onClick={reveal} style={{width:"100%",padding:15,borderRadius:12,fontWeight:700,fontSize:16,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"aa)",border:"none",color:"#fff",boxShadow:"0 4px 20px "+sub.color+"44"}}>顯示答案 🔐</button>
+        ? <div style={{display:"flex",gap:9}}>
+            <button onClick={reveal} style={{flex:1,padding:13,borderRadius:12,fontWeight:600,fontSize:14,background:"rgba(61,158,110,0.08)",border:"1px solid rgba(61,158,110,0.25)",color:"#3d9e6e"}}>顯示答案 🔐</button>
+            <button onClick={nextQ} style={{flex:1,padding:13,borderRadius:12,fontWeight:700,fontSize:14,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"aa)",border:"none",color:"#fff",boxShadow:"0 3px 14px "+sub.color+"44"}}>
+              {qIdx+1>=questions.length?"完成 →":"下一題 →"}
+            </button>
+          </div>
         : <div style={{animation:"fadein .3s ease"}}>
             {/* 答案密碼鎖 */}
             {ansPwOpen && <AnsPwModal onSuccess={onAnsUnlock} onClose={()=>setAnsPwOpen(false)}/>}
@@ -433,10 +443,11 @@ function QuizScreen({ session, setSession, setScreen, setLb }) {
                   }
                 </>
             }
-            <div style={{fontSize:12,color:"#555",textAlign:"center",marginBottom:10}}>你答對了嗎？</div>
-            <div style={{display:"flex",gap:10}}>
-              <button onClick={()=>mark(false)} style={{flex:1,padding:14,borderRadius:12,fontWeight:700,fontSize:15,background:"rgba(217,95,59,0.1)",border:"1px solid rgba(217,95,59,0.3)",color:"#d95f3b"}}>✗ 答錯了</button>
-              <button onClick={()=>mark(true)}  style={{flex:1,padding:14,borderRadius:12,fontWeight:700,fontSize:15,background:"rgba(61,158,110,0.1)",border:"1px solid rgba(61,158,110,0.3)",color:"#3d9e6e"}}>✓ 答對了</button>
+            <div style={{display:"flex",gap:9,marginTop:4}}>
+              {!showAns&&<button onClick={reveal} style={{flex:1,padding:13,borderRadius:12,fontWeight:600,fontSize:14,background:"rgba(61,158,110,0.08)",border:"1px solid rgba(61,158,110,0.25)",color:"#3d9e6e"}}>顯示答案 🔐</button>}
+              <button onClick={nextQ} style={{flex:1,padding:13,borderRadius:12,fontWeight:700,fontSize:14,background:"linear-gradient(135deg,"+sub.color+","+sub.color+"aa)",border:"none",color:"#fff",boxShadow:"0 3px 14px "+sub.color+"44"}}>
+                {qIdx+1>=questions.length?"完成 →":"下一題 →"}
+              </button>
             </div>
           </div>
       }
@@ -446,7 +457,7 @@ function QuizScreen({ session, setSession, setScreen, setLb }) {
 
 function ResultScreen({ session, setSession, setScreen, setLb }) {
   const {results}=session;
-  const score=results.filter(r=>r.correct).length,pct=results.length>0?score/results.length:0;
+  const score=results.filter(r=>r.correct===true).length,pct=results.length>0?score/results.length:0;
   return (
     <div style={{animation:"fadein .4s ease"}}>
       <div style={{textAlign:"center",padding:"24px 0 20px"}}>
